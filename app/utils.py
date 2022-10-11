@@ -55,6 +55,7 @@ class on_exception(Sink):
         pass  # NO-OP
 
 
+@Stream.register_api(staticmethod, attribute_name="from_secured_mqtt")
 class from_mqtt(from_q):
     """Read from MQTT source
     See https://en.wikipedia.org/wiki/MQTT for a description of the protocol
@@ -117,6 +118,7 @@ class from_mqtt(from_q):
         client.disconnect()
 
 
+@Stream.register_api(attribute_name="to_secured_mqtt")
 class to_mqtt(Sink):
     """
     Send data to MQTT broker

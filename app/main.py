@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from functools import partial
 
 import numpy as np
+from streamz import Stream
 from paho.mqtt.client import MQTTMessage
 from jsonpointer import JsonPointer
-
 
 import dynamic_model
 import opt
@@ -17,18 +17,16 @@ from nordpool import fetch_nordpool_data
 from smhi import fetch_smhi_temperatures
 import utils
 
-logging
-
 
 @dataclass
-class MastermindConfig:
+class Config:
     T_indoor_requested: float = 20.0
     T_indoor_bounds: Tuple[float] = (-2, 2)
     T_feed_maximum: float = 60.0
     sensor_timeout: int = 600
 
 
-config = MastermindConfig()
+config = Config()
 
 
 def run(cmd_args: argparse.Namespace):
@@ -89,19 +87,15 @@ def run(cmd_args: argparse.Namespace):
 
     # Build pipeline
 
-    source_outdoor_temperature = (
-        utils.from_mqtt(
-            cmd_args.host,
-            cmd_args.port,
-            cmd_args.T_outdoor_topic,
-            username=cmd_args.username,
-            password=cmd_args.password,
-        )
-        .map(partial(resolve_jsonpointer, cmd_args.T_outdoor_jsonpointer))
-        .map(lambda x: x - 10)
-    )
+    source_outdoor_temperature = Stream.from_secured_mqtt(
+        cmd_args.host,
+        cmd_args.port,
+        cmd_args.T_outdoor_topic,
+        username=cmd_args.username,
+        password=cmd_args.password,
+    ).map(partial(resolve_jsonpointer, cmd_args.T_outdoor_jsonpointer))
 
-    source_indoor_temperature = utils.from_mqtt(
+    source_indoor_temperature = Stream.from_secured_mqtt(
         cmd_args.host,
         cmd_args.port,
         cmd_args.T_indoor_topic,
@@ -110,12 +104,8 @@ def run(cmd_args: argparse.Namespace):
     ).map(partial(resolve_jsonpointer, cmd_args.T_indoor_jsonpointer))
 
     # Exception handling
-    source_outdoor_temperature.on_exception(exception=ValueError).sink(
-        print
-    )  # Do nothing
-    source_indoor_temperature.on_exception(exception=ValueError).sink(
-        print
-    )  # Do nothing
+    source_outdoor_temperature.on_exception(exception=ValueError).sink(print)
+    source_indoor_temperature.on_exception(exception=ValueError).sink(print)
 
     opt_output = (
         utils.combine_latest_with_timeout(
@@ -129,10 +119,9 @@ def run(cmd_args: argparse.Namespace):
     )
 
     # Exception handling
-    utils.on_exception(opt_output).map(lambda x: logging.exception(x))
+    opt_output.on_exception().sink(print)
 
-    sink = utils.to_mqtt(
-        opt_output,
+    sink = opt_output.to_secured_mqtt(
         cmd_args.host,
         cmd_args.port,
         cmd_args.T_feed_target_topic,
@@ -143,13 +132,15 @@ def run(cmd_args: argparse.Namespace):
     # Lets get this show on the road!
     sink.start()
 
+    logging.info("Pipeline started!")
+
     while True:
         time.sleep(1)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Esther mastermind - an economically smart thermostat"
+        description="Esther - an economically smart thermostat"
     )
     parser.add_argument("host", type=str, help="Hostname of MQTT broker")
     parser.add_argument("port", type=int, help="Port number of MQTT broker")
