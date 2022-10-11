@@ -1,0 +1,269 @@
+import json
+import logging
+import argparse
+import time
+from typing import Tuple
+from dataclasses import dataclass
+from functools import partial
+
+import numpy as np
+from paho.mqtt.client import MQTTMessage
+from jsonpointer import JsonPointer
+
+
+import dynamic_model
+import opt
+from nordpool import fetch_nordpool_data
+from smhi import fetch_smhi_temperatures
+import utils
+
+logging
+
+
+@dataclass
+class MastermindConfig:
+    T_indoor_requested: float = 20.0
+    T_indoor_bounds: Tuple[float] = (-2, 2)
+    T_feed_maximum: float = 60.0
+    sensor_timeout: int = 600
+
+
+config = MastermindConfig()
+
+
+def run(cmd_args: argparse.Namespace):
+    """Main function setting up and running the gateway functionality
+
+    Args:
+        config (argparse.Namespace): argparse command line config
+    """
+
+    # Update config
+    config.T_indoor_requested = cmd_args.T_indoor_requested
+    config.T_indoor_bounds = cmd_args.T_indoor_bounds
+    config.T_feed_maximum = cmd_args.T_feed_maximum
+    config.sensor_timeout = cmd_args.sensor_timeout
+
+    def resolve_jsonpointer(pointer: JsonPointer, x: MQTTMessage):
+        obj = json.loads(x.payload)
+        return pointer.resolve(obj)
+
+    def run_optimization(x):
+        T_outdoor_current, T_indoor_current = x
+        prices = fetch_nordpool_data(cmd_args.nordpool_price_area)
+        outdoor_temperatures = fetch_smhi_temperatures(
+            cmd_args.smhi_longitude, cmd_args.smhi_latitude
+        )
+
+        # Add current outdoor temperature to the list of prognosticised temperatures and adjust length in accordance to the list of prices
+        outdoor_temperatures = np.insert(outdoor_temperatures, 0, T_outdoor_current)
+        outdoor_temperatures = outdoor_temperatures[: len(prices)]
+
+        model = dynamic_model.HeatedHouseWithIVT490(
+            cmd_args.heating_curve_slope, dynamic_model.DEFAULT_K1_VALUE
+        )
+
+        problem = opt.prepare_optimization_problem(
+            model,
+            prices,
+            outdoor_temperatures,
+            T_indoor_current,
+            config.T_indoor_requested,
+            config.T_indoor_requested + config.T_indoor_bounds[0],
+            config.T_indoor_requested + config.T_indoor_bounds[1],
+            config.T_feed_maximum,
+        )
+
+        res = opt.solve_problem(problem)
+
+        logging.debug(res)
+
+        if res.success:
+            logging.info("New target feed temperature: %s", res.x[0])
+            logging.debug(
+                f"Indoor temperature forecast: {model.simulate(T_indoor_current, res.x, outdoor_temperatures)}"
+            )
+            return res.x[0]
+
+        logging.error("Solver failed: %s", res.message)
+
+    # Build pipeline
+
+    source_outdoor_temperature = (
+        utils.from_mqtt(
+            cmd_args.host,
+            cmd_args.port,
+            cmd_args.T_outdoor_topic,
+            username=cmd_args.username,
+            password=cmd_args.password,
+        )
+        .map(partial(resolve_jsonpointer, cmd_args.T_outdoor_jsonpointer))
+        .map(lambda x: x - 10)
+    )
+
+    source_indoor_temperature = utils.from_mqtt(
+        cmd_args.host,
+        cmd_args.port,
+        cmd_args.T_indoor_topic,
+        username=cmd_args.username,
+        password=cmd_args.password,
+    ).map(partial(resolve_jsonpointer, cmd_args.T_indoor_jsonpointer))
+
+    # Exception handling
+    source_outdoor_temperature.on_exception(exception=ValueError).sink(
+        print
+    )  # Do nothing
+    source_indoor_temperature.on_exception(exception=ValueError).sink(
+        print
+    )  # Do nothing
+
+    opt_output = (
+        utils.combine_latest_with_timeout(
+            source_outdoor_temperature,
+            source_indoor_temperature,
+            timeout=config.sensor_timeout,
+        )
+        .latest()
+        .rate_limit(60)
+        .map(run_optimization)
+    )
+
+    # Exception handling
+    utils.on_exception(opt_output).map(lambda x: logging.exception(x))
+
+    sink = utils.to_mqtt(
+        opt_output,
+        cmd_args.host,
+        cmd_args.port,
+        cmd_args.T_feed_target_topic,
+        username=cmd_args.username,
+        password=cmd_args.password,
+    )
+
+    # Lets get this show on the road!
+    sink.start()
+
+    while True:
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Esther mastermind - an economically smart thermostat"
+    )
+    parser.add_argument("host", type=str, help="Hostname of MQTT broker")
+    parser.add_argument("port", type=int, help="Port number of MQTT broker")
+    parser.add_argument(
+        "-u",
+        "--username",
+        type=str,
+        default=None,
+        help="Username to use for accessing the MQTT broker",
+    )
+    parser.add_argument(
+        "-p",
+        "--password",
+        type=str,
+        default=None,
+        help="Password to use for accessing the MQTT broker",
+    )
+    parser.add_argument(
+        "--T-outdoor-topic",
+        type=str,
+        required=True,
+        help="Topic on which to listen for outdoor temperature sensor values",
+    )
+    parser.add_argument(
+        "--T-outdoor-jsonpointer",
+        type=JsonPointer,
+        default=JsonPointer(""),
+        help="JsonPointer for resolving the value in the payload on T-outdoor-topic",
+    )
+    parser.add_argument(
+        "--T-indoor-topic",
+        type=str,
+        required=True,
+        help="Topic on which to listen for indoor temperature sensor values",
+    )
+    parser.add_argument(
+        "--T-indoor-jsonpointer",
+        type=JsonPointer,
+        default=JsonPointer(""),
+        help="JsonPointer for resolving the value in the payload on T-indoor-topic",
+    )
+    parser.add_argument(
+        "--T-feed-target-topic",
+        type=str,
+        required=True,
+        help="Topic on which to publish new target values for the feed temperature",
+    )
+    parser.add_argument(
+        "--sensor-timeout",
+        type=float,
+        default=config.sensor_timeout,
+        help="Sensor timeout",
+    )
+    parser.add_argument(
+        "--T-indoor-requested",
+        type=float,
+        default=config.T_indoor_requested,
+        help="Requested indoor temperature",
+    )
+    parser.add_argument(
+        "--T-indoor-bounds",
+        type=tuple,
+        default=config.T_indoor_bounds,
+        help="Relative bounds of indoor temperature",
+    )
+    parser.add_argument(
+        "--T-feed-maximum",
+        type=float,
+        default=config.T_feed_maximum,
+        help="Maximum allowable feed temperature",
+    )
+    parser.add_argument(
+        "--nordpool-price-area",
+        type=str,
+        required=True,
+        help="Nordpool price area, eg: SN3",
+    )
+    parser.add_argument(
+        "--smhi-longitude",
+        type=float,
+        required=True,
+        help="Longitude for SMHI weather forecasts",
+    )
+    parser.add_argument(
+        "--smhi-latitude",
+        type=float,
+        required=True,
+        help="Latitude for SMHI weather forecasts",
+    )
+    parser.add_argument(
+        "--heating-curve-slope",
+        type=float,
+        required=True,
+        help="Heating curve slope value",
+    )
+    parser.add_argument(
+        "-d",
+        "--debug",
+        help="Print lots of debugging statements",
+        action="store_const",
+        dest="loglevel",
+        const=logging.DEBUG,
+        default=logging.WARNING,
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        help="Be verbose",
+        action="store_const",
+        dest="loglevel",
+        const=logging.INFO,
+    )
+
+    conf = parser.parse_args()
+
+    logging.basicConfig(level=conf.loglevel)
+    run(conf)

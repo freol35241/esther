@@ -1,0 +1,4 @@
+black==22.6.0
+pylint==2.14.4
+-r requirements.txt
+-r notebooks/requirements.txt
