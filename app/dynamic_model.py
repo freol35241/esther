@@ -1,62 +1,22 @@
+import typing
 import math
+from dataclasses import dataclass
+
 import numpy as np
 
-DEFAULT_K1_VALUE = 1 / 450000  # Tidskonstant: 125h
+DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT = 1 / 450000  # Tidskonstant: 125h
 
 
-class HeatedHouseWithSingleHeatingSource:
-    def __init__(self, k1: float, k2: float):
-        self._k1 = k1
-        self._k2 = k2
-
-    @staticmethod
-    def _analytical_solution(
-        k1: float,
-        k2: float,
-        T_indoor_0: float,
-        T_feed: float,
-        T_outdoor: float,
-        t: float = 3600,
-    ) -> float:
-        K = k1 + k2
-        T_w = (k2 * T_feed + k1 * T_outdoor) / K
-        delta = T_indoor_0 - T_w
-        return T_w + delta * math.exp(-K * t)
-
-    def simulate(
-        self,
-        T_indoor_now: float,
-        T_feed: np.ndarray,
-        T_outdoor: np.ndarray,
-        delta_t: float = 3600,
-    ):
-        T_indoor = []
-        Ti = T_indoor_now
-
-        for (Tf, To) in zip(T_feed, T_outdoor):
-            Ti = self._analytical_solution(self._k1, self._k2, Ti, Tf, To, delta_t)
-            T_indoor.append(Ti)
-
-        return np.asarray(T_indoor)
+@dataclass
+class ModelParameters:
+    k1: float
+    k2: float
 
 
-class HeatedHouseWithIVT490(HeatedHouseWithSingleHeatingSource):
-    def __init__(self, heating_curve_slope: float, k1: float):
-
-        self.heating_curve_slope = heating_curve_slope
-
-        assumed_T_outdoor = 0.0
-        assumed_T_indoor = 20.0
-        resulting_T_feed = self.heating_curve(
-            self.heating_curve_slope, assumed_T_outdoor
-        )
-        k2k1_ratio = (assumed_T_indoor - assumed_T_outdoor) / (
-            resulting_T_feed - assumed_T_indoor
-        )
-
-        super().__init__(k1, k1 * k2k1_ratio)
-
-    @staticmethod
+def create_model_from_IVT490_settings(
+    heating_curve_slope: float,
+    house_cooldown_time_constant: float = DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT,
+) -> ModelParameters:
     def heating_curve(slope: float, T_outdoor: float) -> float:
         """Returns the feed temperature for the given slope and outdoor temperature
 
@@ -69,15 +29,43 @@ class HeatedHouseWithIVT490(HeatedHouseWithSingleHeatingSource):
         """
         return 20 + (-0.16 * slope) * (T_outdoor - 20)
 
-    @staticmethod
-    def inverse_heating_curve(slope: float, T_feed: float) -> float:
-        """Returns the outdoor temperature for the given slope and feed temperature
+    assumed_T_outdoor = 0.0
+    assumed_T_indoor = 20.0
+    resulting_T_feed = heating_curve(heating_curve_slope, assumed_T_outdoor)
+    k2k1_ratio = (assumed_T_indoor - assumed_T_outdoor) / (
+        resulting_T_feed - assumed_T_indoor
+    )
 
-        Args:
-            slope (float): Heating curve slope
-            T_feed (float): Feed temperature
+    return ModelParameters(
+        k1=house_cooldown_time_constant, k2=house_cooldown_time_constant * k2k1_ratio
+    )
 
-        Returns:
-            float: Outdoor temperature
-        """
-        return (T_feed - 20) / (-0.16 * slope) + 20
+
+def _analytical_solution(
+    parameters: ModelParameters,
+    T_indoor_0: float,
+    T_feed: float,
+    T_outdoor: float,
+    t: float = 3600,
+) -> float:
+    K = parameters.k1 + parameters.k2
+    T_w = (parameters.k2 * T_feed + parameters.k1 * T_outdoor) / K
+    delta = T_indoor_0 - T_w
+    return T_w + delta * math.exp(-K * t)
+
+
+def simulate(
+    parameters: ModelParameters,
+    T_indoor_now: float,
+    T_feed: np.ndarray,
+    T_outdoor: np.ndarray,
+    delta_t: np.ndarray,
+):
+    T_indoor = []
+    Ti = T_indoor_now
+
+    for (Tf, To, dt) in zip(T_feed, T_outdoor, delta_t):
+        Ti = _analytical_solution(parameters, Ti, Tf, To, dt)
+        T_indoor.append(Ti)
+
+    return np.asarray(T_indoor)

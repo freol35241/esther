@@ -1,11 +1,12 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List, Tuple, Callable
 from functools import partial
 
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 
-from dynamic_model import HeatedHouseWithIVT490
+from dynamic_model import ModelParameters, simulate
 
 
 @dataclass
@@ -18,7 +19,7 @@ class ProblemDefinition:
 
 
 def prepare_optimization_problem(
-    dynamic_model: HeatedHouseWithIVT490,
+    model: ModelParameters,
     electricity_prices: np.ndarray,
     outdoor_temperatures: np.ndarray,
     current_indoor_temperature: float,
@@ -33,6 +34,10 @@ def prepare_optimization_problem(
         raise RuntimeError(
             "Lengths of electricity_prices and outdoor_temperatures must match!"
         )
+
+    delta_t = np.ones_like(electricity_prices) * 3600
+    now = datetime.now()
+    delta_t[0] -= now.minute * 60 + now.second
 
     minimum_indoor_temperature = min(
         minimum_indoor_temperature, current_indoor_temperature
@@ -53,8 +58,8 @@ def prepare_optimization_problem(
         return (electricity_prices * T_feed).sum() / electricity_prices.sum()
 
     def _inequality_constraints(T_feed: np.ndarray) -> np.ndarray:
-        T_indoor = dynamic_model.simulate(
-            current_indoor_temperature, T_feed, outdoor_temperatures
+        T_indoor = simulate(
+            model, current_indoor_temperature, T_feed, outdoor_temperatures, delta_t
         )
         lower = np.array(T_indoor) - minimum_indoor_temperature
         upper = maximum_indoor_temperature - np.array(T_indoor)
@@ -62,8 +67,8 @@ def prepare_optimization_problem(
 
     def _equality_constraints(T_feed: np.ndarray) -> np.ndarray:
         return (
-            dynamic_model.simulate(
-                current_indoor_temperature, T_feed, outdoor_temperatures
+            simulate(
+                model, current_indoor_temperature, T_feed, outdoor_temperatures, delta_t
             )[-1]
             - requested_indoor_temperature
         )
@@ -74,20 +79,11 @@ def prepare_optimization_problem(
         equality_constraints=_equality_constraints,
         bounds=[(minimum_indoor_temperature, maximum_feed_temperature)]
         * no_of_variables,
-        initial_guess=np.asarray(
-            list(
-                map(
-                    partial(
-                        dynamic_model.heating_curve, dynamic_model.heating_curve_slope
-                    ),
-                    outdoor_temperatures,
-                )
-            )
-        ),
+        initial_guess=np.ones_like(outdoor_temperatures) * current_indoor_temperature,
     )
 
 
-def solve_problem(problem: ProblemDefinition) -> OptimizeResult:
+def solve_problem(problem: ProblemDefinition, **kwargs) -> OptimizeResult:
     return minimize(
         problem.objective,
         problem.initial_guess,
@@ -100,7 +96,5 @@ def solve_problem(problem: ProblemDefinition) -> OptimizeResult:
             {"type": "eq", "fun": problem.equality_constraints},
         ],
         bounds=problem.bounds,
-        options={
-            "maxiter": 500,
-        },
+        options=kwargs,
     )

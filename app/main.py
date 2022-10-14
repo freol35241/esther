@@ -5,6 +5,7 @@ import time
 from typing import Tuple
 from dataclasses import dataclass
 from functools import partial
+from datetime import datetime
 
 import numpy as np
 from streamz import Stream
@@ -57,8 +58,8 @@ def run(cmd_args: argparse.Namespace):
         outdoor_temperatures = np.insert(outdoor_temperatures, 0, T_outdoor_current)
         outdoor_temperatures = outdoor_temperatures[: len(prices)]
 
-        model = dynamic_model.HeatedHouseWithIVT490(
-            cmd_args.heating_curve_slope, dynamic_model.DEFAULT_K1_VALUE
+        model = dynamic_model.create_model_from_IVT490_settings(
+            cmd_args.heating_curve_slope
         )
 
         problem = opt.prepare_optimization_problem(
@@ -72,14 +73,18 @@ def run(cmd_args: argparse.Namespace):
             config.T_feed_maximum,
         )
 
-        res = opt.solve_problem(problem)
+        res = opt.solve_problem(problem, maxiter=500)
 
         logging.debug(res)
+
+        delta_t = np.ones_like(prices) * 3600
+        now = datetime.now()
+        delta_t[0] -= now.minute * 60 + now.second
 
         if res.success:
             logging.info("New target feed temperature: %s", res.x[0])
             logging.debug(
-                f"Indoor temperature forecast: {model.simulate(T_indoor_current, res.x, outdoor_temperatures)}"
+                f"Indoor temperature forecast: {dynamic_model.simulate(model, T_indoor_current, res.x, outdoor_temperatures, delta_t)}"
             )
             return res.x[0]
 
