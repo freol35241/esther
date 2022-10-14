@@ -1,26 +1,18 @@
-from datetime import date, datetime
+from datetime import datetime, timezone, timedelta
+import logging
 
 import requests
 import numpy as np
 import pandas as pd
 
-NORDPOOL_API_URL = (
-    "https://www.vattenfall.se/api/price/spot/pricearea/{start}/{end}/{price_area}"
-)
+LOGGER = logging.getLogger(__name__)
+
+NORDPOOL_API_URL = "https://spot.utilitarian.io/electricity/{price_area}/latest/"
 
 
-def fetch_nordpool_data(
-    price_area: str, start: date = None, end: date = None
-) -> np.ndarray:
+def fetch_nordpool_data(price_area: str) -> np.ndarray:
 
-    only_future_times = True if start is None else False
-
-    start = start or date.today()
-    end = end or date.fromisoformat("2099-12-31")
-
-    url = NORDPOOL_API_URL.format(
-        start=start.isoformat(), end=end.isoformat(), price_area=price_area
-    )
+    url = NORDPOOL_API_URL.format(price_area=price_area)
 
     response = requests.get(url)
 
@@ -28,9 +20,13 @@ def fetch_nordpool_data(
 
     data = pd.json_normalize(response.json())
 
-    now = datetime.now()
+    data["timestamp"] = pd.to_datetime(data["timestamp"], infer_datetime_format=True)
 
-    if only_future_times:
-        data = data[now.hour :]
+    LOGGER.info("Fetched new data from %s", url)
+    LOGGER.debug(data)
 
-    return np.asarray(data["Value"])
+    now = datetime.now(timezone.utc)
+
+    mask = data.timestamp > now - timedelta(hours=1)
+
+    return np.asarray(data["value"], dtype=float)[mask]
