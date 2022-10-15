@@ -18,15 +18,16 @@ def fetch_nordpool_data(price_area: str) -> np.ndarray:
 
     response.raise_for_status()
 
-    data = pd.json_normalize(response.json())
+    data: pd.DataFrame = pd.json_normalize(response.json())
 
     data["timestamp"] = pd.to_datetime(data["timestamp"], infer_datetime_format=True)
+    data.set_index("timestamp", inplace=True)
+    data.sort_index(inplace=True)
 
     LOGGER.info("Fetched new data from %s", url)
     LOGGER.debug(data)
 
     now = datetime.now(timezone.utc)
+    break_point = now - timedelta(hours=1)
 
-    mask = data.timestamp > now - timedelta(hours=1)
-
-    return np.asarray(data["value"], dtype=float)[mask]
+    return np.asarray(data[break_point:]["value"], dtype=float)

@@ -12,11 +12,9 @@ from streamz import Stream
 from paho.mqtt.client import MQTTMessage
 from jsonpointer import JsonPointer
 
-import dynamic_model
-import opt
-from nordpool import fetch_nordpool_data
-from smhi import fetch_smhi_temperatures
-import utils
+from app import dynamic_model, opt, streamz_nodes
+from app.nordpool import fetch_nordpool_data
+from app.smhi import fetch_smhi_temperatures
 
 
 @dataclass
@@ -113,7 +111,7 @@ def run(cmd_args: argparse.Namespace):
     source_indoor_temperature.on_exception(exception=ValueError).sink(print)
 
     opt_output = (
-        utils.combine_latest_with_timeout(
+        streamz_nodes.combine_latest_with_timeout(
             source_outdoor_temperature,
             source_indoor_temperature,
             timeout=config.sensor_timeout,

@@ -6,7 +6,7 @@ from functools import partial
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 
-from dynamic_model import ModelParameters, simulate
+from app.dynamic_model import ModelParameters, simulate
 
 
 @dataclass
@@ -28,6 +28,9 @@ def prepare_optimization_problem(
     maximum_indoor_temperature: float,
     maximum_feed_temperature: float,
 ) -> ProblemDefinition:
+
+    electricity_prices = np.asarray(electricity_prices)
+    outdoor_temperatures = np.asarray(outdoor_temperatures)
 
     no_of_variables = len(electricity_prices)
     if len(outdoor_temperatures) != no_of_variables:
