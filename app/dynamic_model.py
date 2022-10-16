@@ -1,4 +1,3 @@
-import typing
 import math
 from dataclasses import dataclass
 
@@ -11,34 +10,6 @@ DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT = 1 / 450000  # Tidskonstant: 125h
 class ModelParameters:
     k1: float
     k2: float
-
-
-def create_model_from_IVT490_settings(
-    heating_curve_slope: float,
-    house_cooldown_time_constant: float = DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT,
-) -> ModelParameters:
-    def heating_curve(slope: float, T_outdoor: float) -> float:
-        """Returns the feed temperature for the given slope and outdoor temperature
-
-        Args:
-            slope (float): Heating curve slope
-            T_outdoor (float): Outdoor temperature
-
-        Returns:
-            float: Feed temperature
-        """
-        return 20 + (-0.16 * slope) * (T_outdoor - 20)
-
-    assumed_T_outdoor = 0.0
-    assumed_T_indoor = 20.0
-    resulting_T_feed = heating_curve(heating_curve_slope, assumed_T_outdoor)
-    k2k1_ratio = (assumed_T_indoor - assumed_T_outdoor) / (
-        resulting_T_feed - assumed_T_indoor
-    )
-
-    return ModelParameters(
-        k1=house_cooldown_time_constant, k2=house_cooldown_time_constant * k2k1_ratio
-    )
 
 
 def _analytical_solution(

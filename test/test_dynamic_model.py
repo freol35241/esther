@@ -1,30 +1,24 @@
 from app import dynamic_model
+from app.heat_sources import IVT490
 
 import math
 import pytest
-from dataclasses import asdict
-
-
-def test_create_from_IVT490_settings(pinned):
-    assert (
-        asdict(dynamic_model.create_model_from_IVT490_settings(4.7)) == pinned.approx()
-    )
 
 
 def test_simulate_steady_state():
-    model = dynamic_model.create_model_from_IVT490_settings(4.7)
+    model = IVT490.create_model_from_slope(4.7)
 
     assert dynamic_model.simulate(model, 20, [20], [20], [3600]) == 20
 
 
 def test_simulate_cooldown():
-    model = dynamic_model.create_model_from_IVT490_settings(4.7)
+    model = IVT490.create_model_from_slope(4.7)
 
     assert dynamic_model.simulate(model, 20, [20], [0], [3600]) < 20
 
 
 def test_simulate_heatup():
-    model = dynamic_model.create_model_from_IVT490_settings(4.7)
+    model = IVT490.create_model_from_slope(4.7)
 
     assert dynamic_model.simulate(model, 20, [40], [20], [3600]).item() > 20
 

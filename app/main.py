@@ -15,6 +15,7 @@ from jsonpointer import JsonPointer
 from app import dynamic_model, opt, streamz_nodes
 from app.nordpool import fetch_nordpool_data
 from app.smhi import fetch_smhi_temperatures
+from app.heat_sources import IVT490
 
 
 @dataclass
@@ -56,14 +57,19 @@ def run(cmd_args: argparse.Namespace):
         outdoor_temperatures = np.insert(outdoor_temperatures, 0, T_outdoor_current)
         outdoor_temperatures = outdoor_temperatures[: len(prices)]
 
-        model = dynamic_model.create_model_from_IVT490_settings(
-            cmd_args.heating_curve_slope
-        )
+        # Generate times to be simulated
+        delta_t = np.ones_like(prices) * 3600
+        now = datetime.now()
+        delta_t[0] -= now.minute * 60 + now.second
+
+        # Create model parameters from heat pump settings
+        model = IVT490.create_model_from_slope(cmd_args.heating_curve_slope)
 
         problem = opt.prepare_optimization_problem(
             model,
             prices,
             outdoor_temperatures,
+            delta_t,
             T_indoor_current,
             config.T_indoor_requested,
             config.T_indoor_requested + config.T_indoor_bounds[0],
@@ -71,13 +77,15 @@ def run(cmd_args: argparse.Namespace):
             config.T_feed_maximum,
         )
 
-        res = opt.solve_problem(problem, maxiter=500)
+        res = opt.solve_problem(
+            problem,
+            IVT490.make_initial_guess(
+                cmd_args.heating_curve_slope, outdoor_temperatures
+            ),
+            maxiter=500,
+        )
 
         logging.debug(res)
-
-        delta_t = np.ones_like(prices) * 3600
-        now = datetime.now()
-        delta_t[0] -= now.minute * 60 + now.second
 
         if res.success:
             logging.info("New target feed temperature: %s", res.x[0])

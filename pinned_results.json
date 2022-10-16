@@ -1,11 +1,24 @@
 {
-    "test/test_dynamic_model.py::test_create_from_IVT490_settings_1": {
+    "test/test_heating_sources_IVT490.py::test_create_from_slope_1": {
         "k1": 2.222222222222222e-06,
         "k2": 2.9550827423167846e-06
     },
+    "test/test_heating_sources_IVT490.py::test_make_initial_guess_1": [
+        27.52,
+        20.0,
+        35.04,
+        42.56
+    ],
+    "test/test_opt.py::test_prepare_optimization_problem_1": [
+        "size",
+        "objective",
+        "inequality_constraints",
+        "equality_constraints",
+        "bounds"
+    ],
     "test/test_opt.py::test_solve_problem_1": [
-        18.000000000000014,
-        27.98297137607075
+        33.45910047478758,
+        18.0
     ],
     "test/test_utils.py::test_T_eff_1": -7.052557440530164
 }

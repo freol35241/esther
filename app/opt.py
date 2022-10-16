@@ -1,27 +1,29 @@
 from dataclasses import dataclass
-from datetime import datetime
 from typing import List, Tuple, Callable
-from functools import partial
+import logging
 
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 
 from app.dynamic_model import ModelParameters, simulate
 
+LOGGER = logging.getLogger(__name__)
+
 
 @dataclass
 class ProblemDefinition:
+    size: int
     objective: Callable[[np.ndarray], float]
     inequality_constraints: Callable[[np.ndarray], np.ndarray]
     equality_constraints: Callable[[np.ndarray], np.ndarray]
     bounds: List[Tuple]
-    initial_guess: np.ndarray
 
 
 def prepare_optimization_problem(
     model: ModelParameters,
     electricity_prices: np.ndarray,
     outdoor_temperatures: np.ndarray,
+    delta_t: np.ndarray,
     current_indoor_temperature: float,
     requested_indoor_temperature: float,
     minimum_indoor_temperature: float,
@@ -31,16 +33,24 @@ def prepare_optimization_problem(
 
     electricity_prices = np.asarray(electricity_prices)
     outdoor_temperatures = np.asarray(outdoor_temperatures)
+    delta_t = np.asarray(delta_t)
+
+    LOGGER.info("Preparing a new optimization problem.")
+    LOGGER.debug("  model=%s", model)
+    LOGGER.debug("  electricity_prices=%s", electricity_prices)
+    LOGGER.debug("  outdoor_temperatures=%s", outdoor_temperatures)
+    LOGGER.debug("  delta_t=%s", delta_t)
+    LOGGER.debug("  current_indoor_temperature=%s", current_indoor_temperature)
+    LOGGER.debug("  requested_indoor_temperature=%s", requested_indoor_temperature)
+    LOGGER.debug("  minimum_indoor_temperature=%s", minimum_indoor_temperature)
+    LOGGER.debug("  maximum_indoor_temperature=%s", maximum_indoor_temperature)
+    LOGGER.debug("  maximum_feed_temperature=%s", maximum_feed_temperature)
 
     no_of_variables = len(electricity_prices)
     if len(outdoor_temperatures) != no_of_variables:
         raise RuntimeError(
             "Lengths of electricity_prices and outdoor_temperatures must match!"
         )
-
-    delta_t = np.ones_like(electricity_prices) * 3600
-    now = datetime.now()
-    delta_t[0] -= now.minute * 60 + now.second
 
     minimum_indoor_temperature = min(
         minimum_indoor_temperature, current_indoor_temperature
@@ -77,19 +87,21 @@ def prepare_optimization_problem(
         )
 
     return ProblemDefinition(
+        size=len(outdoor_temperatures),
         objective=_objective,
         inequality_constraints=_inequality_constraints,
         equality_constraints=_equality_constraints,
         bounds=[(minimum_indoor_temperature, maximum_feed_temperature)]
         * no_of_variables,
-        initial_guess=np.ones_like(outdoor_temperatures) * current_indoor_temperature,
     )
 
 
-def solve_problem(problem: ProblemDefinition, **kwargs) -> OptimizeResult:
+def solve_problem(
+    problem: ProblemDefinition, initial_guess: np.ndarray, **kwargs
+) -> OptimizeResult:
     return minimize(
         problem.objective,
-        problem.initial_guess,
+        initial_guess,
         method="SLSQP",
         constraints=[
             {
