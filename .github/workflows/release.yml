@@ -28,7 +28,7 @@ jobs:
         with:
           file: Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm/v7
+          platforms: linux/amd64 #,linux/arm/v7
           tags: |
             ghcr.io/freol35241/esther:latest
             ghcr.io/freol35241/esther:${{ github.event.release.tag_name }}
