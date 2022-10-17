@@ -10,6 +10,11 @@ LOGGER = logging.getLogger(__name__)
 NORDPOOL_API_URL = "https://spot.utilitarian.io/electricity/{price_area}/latest/"
 
 
+def _get_break_point_time():
+    now = datetime.now(timezone.utc)
+    return now - timedelta(hours=1)
+
+
 def fetch_nordpool_data(price_area: str) -> np.ndarray:
 
     url = NORDPOOL_API_URL.format(price_area=price_area)
@@ -27,7 +32,4 @@ def fetch_nordpool_data(price_area: str) -> np.ndarray:
     LOGGER.info("Fetched new data from %s", url)
     LOGGER.debug(data)
 
-    now = datetime.now(timezone.utc)
-    break_point = now - timedelta(hours=1)
-
-    return np.asarray(data[break_point:]["value"], dtype=float)
+    return np.asarray(data[_get_break_point_time() :]["value"], dtype=float)
