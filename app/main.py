@@ -50,7 +50,7 @@ def run(cmd_args: argparse.Namespace):
         T_outdoor_current, T_indoor_current = x
         prices = fetch_nordpool_data(cmd_args.nordpool_price_area)
         outdoor_temperatures = fetch_smhi_temperatures(
-            cmd_args.smhi_longitude, cmd_args.smhi_latitude
+            cmd_args.longitude, cmd_args.latitude
         )
 
         # Add current outdoor temperature to the list of prognosticised temperatures and adjust length in accordance to the list of prices
@@ -151,7 +151,8 @@ def run(cmd_args: argparse.Namespace):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Esther - an economically smart thermostat"
+        description="Esther - an economically smart thermostat",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("host", type=str, help="Hostname of MQTT broker")
     parser.add_argument("port", type=int, help="Port number of MQTT broker")
@@ -197,13 +198,13 @@ if __name__ == "__main__":
         "--T-feed-target-topic",
         type=str,
         required=True,
-        help="Topic on which to publish new target values for the feed temperature",
+        help="Topic on which to publish new optimal target values for the feed temperature",
     )
     parser.add_argument(
         "--sensor-timeout",
         type=float,
         default=config.sensor_timeout,
-        help="Sensor timeout",
+        help="Maximum allowed time (s) between sensor readings (T-indoor and T-outdoor). If exceeded, no new optimal feed temperature will be calculated and outputted until sensor readings are within the given timeout again.",
     )
     parser.add_argument(
         "--T-indoor-requested",
@@ -215,7 +216,7 @@ if __name__ == "__main__":
         "--T-indoor-bounds",
         type=tuple,
         default=config.T_indoor_bounds,
-        help="Relative bounds of indoor temperature",
+        help="Allowed bounds of indoor temperature relative to T-indoor-requested.",
     )
     parser.add_argument(
         "--T-feed-maximum",
@@ -227,16 +228,16 @@ if __name__ == "__main__":
         "--nordpool-price-area",
         type=str,
         required=True,
-        help="Nordpool price area, eg: SN3",
+        help="Nordpool price area, eg: SE3",
     )
     parser.add_argument(
-        "--smhi-longitude",
+        "--longitude",
         type=float,
         required=True,
         help="Longitude for SMHI weather forecasts",
     )
     parser.add_argument(
-        "--smhi-latitude",
+        "--latitude",
         type=float,
         required=True,
         help="Latitude for SMHI weather forecasts",
@@ -245,7 +246,7 @@ if __name__ == "__main__":
         "--heating-curve-slope",
         type=float,
         required=True,
-        help="Heating curve slope value",
+        help="Heating curve slope value, IVT490-style.",
     )
     parser.add_argument(
         "-d",
