@@ -10,6 +10,11 @@ And calculates and outputs (i.e. publishes continuously) the following:
 
 - Optimal feed temperature
 
+A single optimization (in this particular case over a time horizon of 35 hours) run may result in results looking like this:
+![](example_horizon.png)
+
+Which evaluates to a saving (in comparison with the original heating curve used by the heatpump) of about 18%.
+
 ### Limitations
 
 Currently, the following limitations apply:
