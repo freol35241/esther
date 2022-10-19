@@ -1,7 +1,7 @@
 {
     "test/test_heating_sources_IVT490.py::test_create_from_slope_1": {
         "k1": 2.222222222222222e-06,
-        "k2": 2.9550827423167846e-06
+        "k2": 2.3640661938534276e-06
     },
     "test/test_heating_sources_IVT490.py::test_make_initial_guess_1": [
         27.52,
@@ -29,8 +29,8 @@
         "bounds"
     ],
     "test/test_opt.py::test_solve_problem_1": [
-        33.45910047478758,
-        18.0
+        36.289783689742585,
+        18.00000000000037
     ],
     "test/test_smhi.py::test_fetch_smhi_temperatures_1": [
         14.0,
