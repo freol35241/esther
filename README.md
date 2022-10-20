@@ -1,5 +1,7 @@
 # Esther
-Esther is an **E**conomically **S**mart **Ther**mostat which runs continuous, online optimizations using a Model Predictive Control (MPC) scheme to minimize your heating cost. For further reading on Model-Predictive Control in general, see [here](https://en.wikipedia.org/wiki/Model_predictive_control). It does so by continuously finding an optimal control strategy for the heating system over a receeding time horizon, where the control strategy accounts for current and future hourly electricity prices from the Nordpool energy market, forecasted outdoor temperatures, the currently sensed indoor temperature and the thermodynamical properties of the house and heating system.
+Esther is an **E**conomically **S**mart **Ther**mostat which runs continuous, online optimizations using a [Model Predictive Control (MPC)](https://en.m.wikipedia.org/wiki/Model_predictive_control) scheme to minimize your heating cost.
+
+It does so by continuously finding an optimal control strategy (within given constraints) for the heating system over a receeding time horizon, where the control strategy accounts for current and future hourly electricity prices from the Nordpool energy market, forecasted outdoor temperatures, the currently sensed indoor temperature and the thermodynamical properties of the house and heating system.
 
 Esther operates as a standalone microservice with a MQTT api. In essence, Esther requires the following sensoric inputs to be provided (i.e. Esther will need to be configured to subscribe to topic(s) that provide these data continously):
 
