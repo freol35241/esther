@@ -25,11 +25,12 @@ def test_simulate_heatup():
 
 def test_simulate_timeconstant():
     model = dynamic_model.ModelParameters(
-        k1=dynamic_model.DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT, k2=0
+        T_outdoor_time_constant=dynamic_model.DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT,
+        T_feed_time_constant=float("inf"),
     )
 
     out = dynamic_model.simulate(
-        model, 20, [20], [0], [1 / dynamic_model.DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT]
+        model, 20, [20], [0], [dynamic_model.DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT]
     )
 
     # Should have declined by about 63.2% during this time (i.e. one timeconstant)

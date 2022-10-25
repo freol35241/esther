@@ -3,13 +3,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT = 1 / 450000  # Tidskonstant: 125h
+DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT = 125 * 3600  # seconds
 
 
 @dataclass
 class ModelParameters:
-    k1: float
-    k2: float
+    T_outdoor_time_constant: float
+    T_feed_time_constant: float
 
 
 def _analytical_solution(
@@ -19,8 +19,10 @@ def _analytical_solution(
     T_outdoor: float,
     t: float = 3600,
 ) -> float:
-    K = parameters.k1 + parameters.k2
-    T_w = (parameters.k2 * T_feed + parameters.k1 * T_outdoor) / K
+    k_outdoor = 1 / parameters.T_outdoor_time_constant
+    k_feed = 1 / parameters.T_feed_time_constant
+    K = k_outdoor + k_feed
+    T_w = (k_feed * T_feed + k_outdoor * T_outdoor) / K
     delta = T_indoor_0 - T_w
     return T_w + delta * math.exp(-K * t)
 

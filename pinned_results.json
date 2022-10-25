@@ -1,7 +1,7 @@
 {
     "test/test_heating_sources_IVT490.py::test_create_from_slope_1": {
-        "k1": 2.222222222222222e-06,
-        "k2": 2.3640661938534276e-06
+        "T_feed_time_constant": 423000.00000000006,
+        "T_outdoor_time_constant": 450000
     },
     "test/test_heating_sources_IVT490.py::test_make_initial_guess_1": [
         27.52,

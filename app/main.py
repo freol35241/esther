@@ -154,100 +154,7 @@ if __name__ == "__main__":
         description="Esther - an economically smart thermostat",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("host", type=str, help="Hostname of MQTT broker")
-    parser.add_argument("port", type=int, help="Port number of MQTT broker")
-    parser.add_argument(
-        "-u",
-        "--username",
-        type=str,
-        default=None,
-        help="Username to use for accessing the MQTT broker",
-    )
-    parser.add_argument(
-        "-p",
-        "--password",
-        type=str,
-        default=None,
-        help="Password to use for accessing the MQTT broker",
-    )
-    parser.add_argument(
-        "--T-outdoor-topic",
-        type=str,
-        required=True,
-        help="Topic on which to listen for outdoor temperature sensor values",
-    )
-    parser.add_argument(
-        "--T-outdoor-jsonpointer",
-        type=JsonPointer,
-        default=JsonPointer(""),
-        help="JsonPointer for resolving the value in the payload on T-outdoor-topic",
-    )
-    parser.add_argument(
-        "--T-indoor-topic",
-        type=str,
-        required=True,
-        help="Topic on which to listen for indoor temperature sensor values",
-    )
-    parser.add_argument(
-        "--T-indoor-jsonpointer",
-        type=JsonPointer,
-        default=JsonPointer(""),
-        help="JsonPointer for resolving the value in the payload on T-indoor-topic",
-    )
-    parser.add_argument(
-        "--T-feed-target-topic",
-        type=str,
-        required=True,
-        help="Topic on which to publish new optimal target values for the feed temperature",
-    )
-    parser.add_argument(
-        "--sensor-timeout",
-        type=float,
-        default=config.sensor_timeout,
-        help="Maximum allowed time (s) between sensor readings (T-indoor and T-outdoor). If exceeded, no new optimal feed temperature will be calculated and outputted until sensor readings are within the given timeout again.",
-    )
-    parser.add_argument(
-        "--T-indoor-requested",
-        type=float,
-        default=config.T_indoor_requested,
-        help="Requested indoor temperature",
-    )
-    parser.add_argument(
-        "--T-indoor-bounds",
-        type=tuple,
-        default=config.T_indoor_bounds,
-        help="Allowed bounds of indoor temperature relative to T-indoor-requested.",
-    )
-    parser.add_argument(
-        "--T-feed-maximum",
-        type=float,
-        default=config.T_feed_maximum,
-        help="Maximum allowable feed temperature",
-    )
-    parser.add_argument(
-        "--nordpool-price-area",
-        type=str,
-        required=True,
-        help="Nordpool price area, eg: SE3",
-    )
-    parser.add_argument(
-        "--longitude",
-        type=float,
-        required=True,
-        help="Longitude for SMHI weather forecasts",
-    )
-    parser.add_argument(
-        "--latitude",
-        type=float,
-        required=True,
-        help="Latitude for SMHI weather forecasts",
-    )
-    parser.add_argument(
-        "--heating-curve-slope",
-        type=float,
-        required=True,
-        help="Heating curve slope value, IVT490-style.",
-    )
+
     parser.add_argument(
         "-d",
         "--debug",
@@ -264,6 +171,121 @@ if __name__ == "__main__":
         action="store_const",
         dest="loglevel",
         const=logging.INFO,
+    )
+
+    general_config_group = parser.add_argument_group(title="General configuration")
+    general_config_group.add_argument(
+        "--sensor-timeout",
+        type=float,
+        default=config.sensor_timeout,
+        help="Maximum allowed time (s) between sensor readings (T-indoor and T-outdoor). If exceeded, no new optimal feed temperature will be calculated and outputted until sensor readings are within the given timeout again.",
+    )
+    general_config_group.add_argument(
+        "--T-indoor-requested",
+        type=float,
+        default=config.T_indoor_requested,
+        help="Requested indoor temperature",
+    )
+    general_config_group.add_argument(
+        "--T-indoor-bounds",
+        type=tuple,
+        default=config.T_indoor_bounds,
+        help="Allowed bounds of indoor temperature relative to T-indoor-requested.",
+    )
+    general_config_group.add_argument(
+        "--T-feed-maximum",
+        type=float,
+        default=config.T_feed_maximum,
+        help="Maximum allowable feed temperature",
+    )
+    general_config_group.add_argument(
+        "--nordpool-price-area",
+        type=str,
+        required=True,
+        help="Nordpool price area, eg: SE3",
+    )
+    general_config_group.add_argument(
+        "--longitude",
+        type=float,
+        required=True,
+        help="Longitude for SMHI weather forecasts",
+    )
+    general_config_group.add_argument(
+        "--latitude",
+        type=float,
+        required=True,
+        help="Latitude for SMHI weather forecasts",
+    )
+
+    mqtt_group = parser.add_argument_group(title="MQTT connection configuration")
+    mqtt_group.add_argument(
+        "--host", type=str, required=True, help="Hostname of MQTT broker"
+    )
+    mqtt_group.add_argument(
+        "--port", type=int, default=1883, help="Port number of MQTT broker"
+    )
+    mqtt_group.add_argument(
+        "--username",
+        type=str,
+        default=None,
+        help="Username to use for accessing the MQTT broker",
+    )
+    mqtt_group.add_argument(
+        "--password",
+        type=str,
+        default=None,
+        help="Password to use for accessing the MQTT broker",
+    )
+
+    mqtt_api_group = parser.add_argument_group(title="MQTT API configuration")
+    mqtt_api_group.add_argument(
+        "--T-outdoor-topic",
+        type=str,
+        required=True,
+        help="Topic on which to listen for outdoor temperature sensor values",
+    )
+    mqtt_api_group.add_argument(
+        "--T-outdoor-jsonpointer",
+        type=JsonPointer,
+        default=JsonPointer(""),
+        help="JsonPointer for resolving the value in the payload on T-outdoor-topic",
+    )
+    mqtt_api_group.add_argument(
+        "--T-indoor-topic",
+        type=str,
+        required=True,
+        help="Topic on which to listen for indoor temperature sensor values",
+    )
+    mqtt_api_group.add_argument(
+        "--T-indoor-jsonpointer",
+        type=JsonPointer,
+        default=JsonPointer(""),
+        help="JsonPointer for resolving the value in the payload on T-indoor-topic",
+    )
+    mqtt_api_group.add_argument(
+        "--T-feed-target-topic",
+        type=str,
+        required=True,
+        help="Topic on which to publish new optimal target values for the feed temperature",
+    )
+
+    thermal_group = parser.add_argument_group(title="Heating system configuration")
+    thermal_group.add_argument(
+        "--T-outdoor-time-constant",
+        type=float,
+        default=dynamic_model.DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT,
+        help="Time constant (seconds) of changes in indoor temperature subject to changes in outdoor temperatur",
+    )
+    thermal_exclusive_group = thermal_group.add_mutually_exclusive_group(required=True)
+    thermal_exclusive_group.add_argument(
+        "--T-feed-time-constant",
+        type=float,
+        help="Time constant (seconds) of changes in indoor temperature subject to changes in feed temperature",
+    )
+    thermal_exclusive_group.add_argument(
+        "--T-feed-time-constant-from-IVT490-heating-curve-slope",
+        type=float,
+        help="Heating curve slope value, IVT490-style.",
     )
 
     conf = parser.parse_args()

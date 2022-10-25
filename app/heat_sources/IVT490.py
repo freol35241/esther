@@ -31,8 +31,9 @@ def create_model_from_slope(
     )
 
     return ModelParameters(
-        k1=house_cooldown_time_constant,
-        k2=0.8 * house_cooldown_time_constant * k2k1_ratio,
+        T_outdoor_time_constant=house_cooldown_time_constant,
+        T_feed_time_constant=1
+        / (0.8 * (1 / house_cooldown_time_constant) * k2k1_ratio),
     )
 
 
