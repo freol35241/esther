@@ -25,7 +25,7 @@ Currently, the following limitations apply:
     - The Nordpool electricy price api used by Esther only supports Swedish price areas
     - The weather forecast service api used by Esther is limited to Swedish locations
 
-- Only single-source, waterborne heating systems are supported
+- Only single-source, waterborne heating systems with configurable feed temperature are supported at this moment
 - The thermodynamical model assumes the house to be a single heated unit, i.e. it does not differentiate between floors and/or rooms.
 
 
