@@ -42,6 +42,25 @@ def run(cmd_args: argparse.Namespace):
     config.T_feed_maximum = cmd_args.T_feed_maximum
     config.sensor_timeout = cmd_args.sensor_timeout
 
+    # Configure heating system model
+    if cmd_args.T_feed_time_constant:
+        heating_system_model = dynamic_model.ModelParameters(
+            cmd_args.T_outdoor_time_constant, cmd_args.T_feed_time_constant
+        )
+        initial_guess_func = lambda x: np.ones_like(x) * 25
+    elif cmd_args.T_feed_time_constant_from_IVT490_heating_curve_slope:
+        heating_system_model = IVT490.create_model_from_slope(
+            cmd_args.T_feed_time_constant_from_IVT490_heating_curve_slope,
+            cmd_args.T_outdoor_time_constant,
+        )
+        initial_guess_func = partial(
+            IVT490.make_initial_guess,
+            cmd_args.T_feed_time_constant_from_IVT490_heating_curve_slope,
+        )
+    else:
+        # Should not happen
+        raise ValueError("Dont know how to setup heating system model!")
+
     def resolve_jsonpointer(pointer: JsonPointer, x: MQTTMessage):
         obj = json.loads(x.payload)
         return pointer.resolve(obj)
@@ -62,11 +81,8 @@ def run(cmd_args: argparse.Namespace):
         now = datetime.now()
         delta_t[0] -= now.minute * 60 + now.second
 
-        # Create model parameters from heat pump settings
-        model = IVT490.create_model_from_slope(cmd_args.heating_curve_slope)
-
         problem = opt.prepare_optimization_problem(
-            model,
+            heating_system_model,
             prices,
             outdoor_temperatures,
             delta_t,
@@ -79,9 +95,7 @@ def run(cmd_args: argparse.Namespace):
 
         res = opt.solve_problem(
             problem,
-            IVT490.make_initial_guess(
-                cmd_args.heating_curve_slope, outdoor_temperatures
-            ),
+            initial_guess_func(outdoor_temperatures),
             maxiter=500,
         )
 
@@ -90,7 +104,7 @@ def run(cmd_args: argparse.Namespace):
         if res.success:
             logging.info("New target feed temperature: %s", res.x[0])
             logging.debug(
-                f"Indoor temperature forecast: {dynamic_model.simulate(model, T_indoor_current, res.x, outdoor_temperatures, delta_t)}"
+                f"Indoor temperature forecast: {dynamic_model.simulate(heating_system_model, T_indoor_current, res.x, outdoor_temperatures, delta_t)}"
             )
             return res.x[0]
 
