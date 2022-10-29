@@ -288,13 +288,13 @@ if __name__ == "__main__":
         "--T-outdoor-time-constant",
         type=float,
         default=dynamic_model.DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT,
-        help="Time constant (seconds) of changes in indoor temperature subject to changes in outdoor temperatur",
+        help="Time constant (hours) of changes in indoor temperature subject to changes in outdoor temperature",
     )
     thermal_exclusive_group = thermal_group.add_mutually_exclusive_group(required=True)
     thermal_exclusive_group.add_argument(
         "--T-feed-time-constant",
         type=float,
-        help="Time constant (seconds) of changes in indoor temperature subject to changes in feed temperature",
+        help="Time constant (hours) of changes in indoor temperature subject to changes in feed temperature",
     )
     thermal_exclusive_group.add_argument(
         "--T-feed-time-constant-from-IVT490-heating-curve-slope",

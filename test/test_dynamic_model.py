@@ -30,7 +30,11 @@ def test_simulate_timeconstant():
     )
 
     out = dynamic_model.simulate(
-        model, 20, [20], [0], [dynamic_model.DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT]
+        model,
+        20,
+        [20],
+        [0],
+        [dynamic_model.DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT * 3600],
     )
 
     # Should have declined by about 63.2% during this time (i.e. one timeconstant)

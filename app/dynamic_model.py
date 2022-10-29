@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT = 125 * 3600  # seconds
+DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT = 125  # hours
 
 
 @dataclass
@@ -19,8 +19,8 @@ def _analytical_solution(
     T_outdoor: float,
     t: float = 3600,
 ) -> float:
-    k_outdoor = 1 / parameters.T_outdoor_time_constant
-    k_feed = 1 / parameters.T_feed_time_constant
+    k_outdoor = 1 / (parameters.T_outdoor_time_constant * 3600)
+    k_feed = 1 / (parameters.T_feed_time_constant * 3600)
     K = k_outdoor + k_feed
     T_w = (k_feed * T_feed + k_outdoor * T_outdoor) / K
     delta = T_indoor_0 - T_w
