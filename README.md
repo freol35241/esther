@@ -37,29 +37,14 @@ The container acts as a command line application and accepts input according to 
 ```
 Esther - an economically smart thermostat
 
-positional arguments:
-  host                  Hostname of MQTT broker
-  port                  Port number of MQTT broker
-
 optional arguments:
   -h, --help            show this help message and exit
-  -u USERNAME, --username USERNAME
-                        Username to use for accessing the MQTT broker (default: None)
-  -p PASSWORD, --password PASSWORD
-                        Password to use for accessing the MQTT broker (default: None)
-  --T-outdoor-topic T_OUTDOOR_TOPIC
-                        Topic on which to listen for outdoor temperature sensor values (default: None)
-  --T-outdoor-jsonpointer T_OUTDOOR_JSONPOINTER
-                        JsonPointer for resolving the value in the payload on T-outdoor-topic (default: )
-  --T-indoor-topic T_INDOOR_TOPIC
-                        Topic on which to listen for indoor temperature sensor values (default: None)
-  --T-indoor-jsonpointer T_INDOOR_JSONPOINTER
-                        JsonPointer for resolving the value in the payload on T-indoor-topic (default: )
-  --T-feed-target-topic T_FEED_TARGET_TOPIC
-                        Topic on which to publish new optimal target values for the feed temperature (default: None)
+  -d, --debug           Print lots of debugging statements (default: 30)
+  -v, --verbose         Be verbose (default: None)
+
+General configuration:
   --sensor-timeout SENSOR_TIMEOUT
-                        Maximum allowed time (s) between sensor readings (T-indoor and T-outdoor). If exceeded, no new optimal feed temperature will be calculated and outputted until sensor readings are within the given timeout again. (default:     
-                        600)
+                        Maximum allowed time (s) between sensor readings (T-indoor and T-outdoor). If exceeded, no new optimal feed temperature will be calculated and outputted until sensor readings are within the given timeout again. (default: 600)
   --T-indoor-requested T_INDOOR_REQUESTED
                         Requested indoor temperature (default: 20.0)
   --T-indoor-bounds T_INDOOR_BOUNDS
@@ -71,10 +56,32 @@ optional arguments:
   --longitude LONGITUDE
                         Longitude for SMHI weather forecasts (default: None)
   --latitude LATITUDE   Latitude for SMHI weather forecasts (default: None)
-  --heating-curve-slope HEATING_CURVE_SLOPE
+
+MQTT connection configuration:
+  --host HOST           Hostname of MQTT broker (default: None)
+  --port PORT           Port number of MQTT broker (default: 1883)
+  --username USERNAME   Username to use for accessing the MQTT broker (default: None)
+  --password PASSWORD   Password to use for accessing the MQTT broker (default: None)
+
+MQTT API configuration:
+  --T-outdoor-topic T_OUTDOOR_TOPIC
+                        Topic on which to listen for outdoor temperature sensor values (default: None)
+  --T-outdoor-jsonpointer T_OUTDOOR_JSONPOINTER
+                        JsonPointer for resolving the value in the payload on T-outdoor-topic (default: )
+  --T-indoor-topic T_INDOOR_TOPIC
+                        Topic on which to listen for indoor temperature sensor values (default: None)
+  --T-indoor-jsonpointer T_INDOOR_JSONPOINTER
+                        JsonPointer for resolving the value in the payload on T-indoor-topic (default: )
+  --T-feed-target-topic T_FEED_TARGET_TOPIC
+                        Topic on which to publish new optimal target values for the feed temperature (default: None)
+
+Heating system configuration:
+  --T-outdoor-time-constant T_OUTDOOR_TIME_CONSTANT
+                        Time constant (hours) of changes in indoor temperature subject to changes in outdoor temperature (default: 125)
+  --T-feed-time-constant T_FEED_TIME_CONSTANT
+                        Time constant (hours) of changes in indoor temperature subject to changes in feed temperature (default: None)
+  --T-feed-time-constant-from-IVT490-heating-curve-slope T_FEED_TIME_CONSTANT_FROM_IVT490_HEATING_CURVE_SLOPE
                         Heating curve slope value, IVT490-style. (default: None)
-  -d, --debug           Print lots of debugging statements (default: 30)
-  -v, --verbose         Be verbose (default: None)
   ```
 
 
