@@ -1,6 +1,6 @@
 paho-mqtt==1.6.1
 requests==2.28.1
-numpy==1.23.4
+numpy==1.23.5
 scipy==1.9.3
 pandas==1.5.1
 streamz==0.6.4
