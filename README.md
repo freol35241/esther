@@ -43,8 +43,11 @@ optional arguments:
   -v, --verbose         Be verbose (default: None)
 
 General configuration:
+  --allow-failing-solutions
+                        Allow failing solutions to the optimization problem to publish target feed temperatures. (default: False)
   --sensor-timeout SENSOR_TIMEOUT
-                        Maximum allowed time (s) between sensor readings (T-indoor and T-outdoor). If exceeded, no new optimal feed temperature will be calculated and outputted until sensor readings are within the given timeout again. (default: 600)
+                        Maximum allowed time (s) between sensor readings (T-indoor and T-outdoor). If exceeded, no new optimal feed temperature will be calculated and outputted until sensor readings are within the given timeout again. (default:     
+                        600)
   --T-indoor-requested T_INDOOR_REQUESTED
                         Requested indoor temperature (default: 20.0)
   --T-indoor-bounds T_INDOOR_BOUNDS

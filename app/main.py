@@ -100,15 +100,17 @@ def run(cmd_args: argparse.Namespace):
         )
 
         logging.debug(res)
+        logging.debug(
+            f"Indoor temperature forecast: {dynamic_model.simulate(heating_system_model, T_indoor_current, res.x, outdoor_temperatures, delta_t)}"
+        )
 
-        if res.success:
-            logging.info("New target feed temperature: %s", res.x[0])
-            logging.debug(
-                f"Indoor temperature forecast: {dynamic_model.simulate(heating_system_model, T_indoor_current, res.x, outdoor_temperatures, delta_t)}"
-            )
-            return res.x[0]
+        if not res.success:
+            logging.error("Solver failed: %s", res.message)
+            if not cmd_args.allow_failing_solutions:
+                return
 
-        logging.error("Solver failed: %s", res.message)
+        logging.info("New target feed temperature: %s", res.x[0])
+        return res.x[0]
 
     # Build pipeline
 
@@ -188,6 +190,11 @@ if __name__ == "__main__":
     )
 
     general_config_group = parser.add_argument_group(title="General configuration")
+    general_config_group.add_argument(
+        "--allow-failing-solutions",
+        action="store_true",
+        help="Allow failing solutions to the optimization problem to publish target feed temperatures.",
+    )
     general_config_group.add_argument(
         "--sensor-timeout",
         type=float,
@@ -305,4 +312,6 @@ if __name__ == "__main__":
     conf = parser.parse_args()
 
     logging.basicConfig(level=conf.loglevel)
+    logging.debug("Parsed command line arguments:")
+    logging.debug(conf)
     run(conf)
