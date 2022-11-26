@@ -21,7 +21,7 @@ from app.heat_sources import IVT490
 @dataclass
 class Config:
     T_indoor_requested: float = 20.0
-    T_indoor_bounds: Tuple[float] = (-2, 2)
+    T_indoor_bounds: Tuple[float] = (-1, 1)
     T_feed_maximum: float = 60.0
     sensor_timeout: int = 600
 
@@ -38,7 +38,10 @@ def run(cmd_args: argparse.Namespace):
 
     # Update config
     config.T_indoor_requested = cmd_args.T_indoor_requested
-    config.T_indoor_bounds = cmd_args.T_indoor_bounds
+    config.T_indoor_bounds = (
+        cmd_args.T_indoor_bound_lower,
+        cmd_args.T_indoor_bound_upper,
+    )
     config.T_feed_maximum = cmd_args.T_feed_maximum
     config.sensor_timeout = cmd_args.sensor_timeout
 
@@ -208,9 +211,15 @@ if __name__ == "__main__":
         help="Requested indoor temperature",
     )
     general_config_group.add_argument(
-        "--T-indoor-bounds",
-        type=tuple,
-        default=config.T_indoor_bounds,
+        "--T-indoor-bound-lower",
+        type=float,
+        default=config.T_indoor_bounds[0],
+        help="Allowed bounds of indoor temperature relative to T-indoor-requested.",
+    )
+    general_config_group.add_argument(
+        "--T-indoor-bound-upper",
+        type=float,
+        default=config.T_indoor_bounds[1],
         help="Allowed bounds of indoor temperature relative to T-indoor-requested.",
     )
     general_config_group.add_argument(
@@ -311,7 +320,9 @@ if __name__ == "__main__":
 
     conf = parser.parse_args()
 
-    logging.basicConfig(level=conf.loglevel)
+    logging.basicConfig(
+        format="%(asctime)s %(levelname)s %(name)s %(message)s", level=conf.loglevel
+    )
     logging.debug("Parsed command line arguments:")
     logging.debug(conf)
     run(conf)
