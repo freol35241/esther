@@ -68,7 +68,10 @@ def prepare_optimization_problem(
         Returns:
             float: Proxy for total cost
         """
-        return (electricity_prices * T_feed).sum() / electricity_prices.sum()
+        timed_weights = delta_t / delta_t.max()
+        return (
+            timed_weights * electricity_prices * T_feed
+        ).sum() / electricity_prices.sum()
 
     def _inequality_constraints(T_feed: np.ndarray) -> np.ndarray:
         T_indoor = simulate(
