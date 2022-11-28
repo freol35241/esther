@@ -99,7 +99,7 @@ def run(cmd_args: argparse.Namespace):
         res = opt.solve_problem(
             problem,
             initial_guess_func(outdoor_temperatures),
-            maxiter=500,
+            maxiter=cmd_args.max_iter,
         )
 
         logging.debug(res)
@@ -316,6 +316,14 @@ if __name__ == "__main__":
         "--T-feed-time-constant-from-IVT490-heating-curve-slope",
         type=float,
         help="Heating curve slope value, IVT490-style.",
+    )
+
+    opt_group = parser.add_argument_group(title="Optimization algorithm configuration")
+    opt_group.add_argument(
+        "--max-iter",
+        type=float,
+        default=500,
+        help="Maximum number of iterations allowed in the optimization algorithms",
     )
 
     conf = parser.parse_args()
