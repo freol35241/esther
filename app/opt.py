@@ -69,8 +69,10 @@ def prepare_optimization_problem(
             float: Proxy for total cost
         """
         timed_weights = delta_t / delta_t.max()
+        COPs = map(model.COP_feed, T_feed) if model.COP_feed else np.ones_like(T_feed)
+        COP_weights = 1 / np.array(list(COPs))
         return (
-            timed_weights * electricity_prices * T_feed
+            COP_weights * timed_weights * electricity_prices * T_feed
         ).sum() / electricity_prices.sum()
 
     def _inequality_constraints(T_feed: np.ndarray) -> np.ndarray:

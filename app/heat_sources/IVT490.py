@@ -18,6 +18,25 @@ def _heating_curve(slope: float, T_outdoor: float) -> float:
     return 20 + (-0.16 * slope) * (T_outdoor - 20)
 
 
+def _COP(T_feed: float) -> float:
+    """Returns an estimated COP for this working point of the heatpump
+
+    Args:
+        T_feed (float): Feed temperature
+
+    Returns:
+        float: Estimated COP (Coefficient of Performance)
+    """
+    delta_T = T_feed - 20  # Assumed indoor temperature
+    if T_feed > 60:
+        return 1
+
+    if delta_T <= 11:
+        return 2
+    else:
+        return (11 * 2 + (delta_T - 11) * 1) / delta_T
+
+
 def create_model_from_slope(
     heating_curve_slope: float,
     house_cooldown_time_constant: float = DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT,
@@ -34,6 +53,7 @@ def create_model_from_slope(
         T_outdoor_time_constant=house_cooldown_time_constant,
         T_feed_time_constant=1
         / (0.8 * (1 / house_cooldown_time_constant) * k2k1_ratio),
+        COP_feed=_COP,
     )
 
 

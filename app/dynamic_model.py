@@ -1,4 +1,5 @@
 import math
+from typing import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -10,6 +11,7 @@ DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT = 125  # hours
 class ModelParameters:
     T_outdoor_time_constant: float
     T_feed_time_constant: float
+    COP_feed: Callable = None
 
 
 def _analytical_solution(
