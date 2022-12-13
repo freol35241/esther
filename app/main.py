@@ -28,6 +28,8 @@ class Config:
 
 config = Config()
 
+last_known_solution = None
+
 
 def run(cmd_args: argparse.Namespace):
     """Main function setting up and running the gateway functionality
@@ -90,16 +92,22 @@ def run(cmd_args: argparse.Namespace):
             config.T_feed_maximum,
         )
 
+        last_known_valid_solution = None
+        if last_known_solution and len(last_known_solution) == len(prices):
+            last_known_valid_solution = last_known_solution
+
+        initial_guess = last_known_valid_solution or list(
+            map(
+                partial(
+                    dynamic_model.make_T_feed_guesstimate, heating_system_model, 20
+                ),
+                outdoor_temperatures,
+            )
+        )
+
         res = opt.solve_problem(
             problem,
-            list(
-                map(
-                    partial(
-                        dynamic_model.make_T_feed_guesstimate, heating_system_model, 20
-                    ),
-                    outdoor_temperatures,
-                )
-            ),
+            initial_guess=initial_guess,
             maxiter=cmd_args.max_iter,
         )
 
@@ -112,6 +120,8 @@ def run(cmd_args: argparse.Namespace):
             logging.error("Solver failed: %s", res.message)
             if not cmd_args.allow_failing_solutions:
                 return
+
+        last_known_solution = res.x
 
         logging.info("New target feed temperature: %s", res.x[0])
         return res.x[0]
