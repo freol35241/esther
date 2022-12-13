@@ -145,27 +145,22 @@ class to_mqtt(Sink):
         client_kwargs=None,
         **kwargs
     ):
-        self.host = host
-        self.port = port
-        self.username = username
-        self.password = password
-        self.c_kw = client_kwargs or {}
-        self.client = None
+        import paho.mqtt.client as mqtt
+
+        self.client = mqtt.Client()
+        self.client.username_pw_set(username, password)
+        self.client.connect(self.host, self.port, keepalive, **(client_kwargs or {}))
+        self.client.loop_start()
+
         self.topic = topic
-        self.keepalive = keepalive
         super().__init__(upstream, ensure_io_loop=True, **kwargs)
 
     def update(self, x, who=None, metadata=None):
-        import paho.mqtt.client as mqtt
-
-        if self.client is None:
-            self.client = mqtt.Client()
-            self.client.username_pw_set(self.username, self.password)
-            self.client.connect(self.host, self.port, self.keepalive, **self.c_kw)
         # TODO: wait on successful delivery
-        self.client.publish(self.topic, x)
+        if self.client.is_connected():
+            self.client.publish(self.topic, x)
 
     def destroy(self):
+        self.client.loop_stop()
         self.client.disconnect()
-        self.client = None
         super().destroy()
