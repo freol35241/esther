@@ -31,10 +31,10 @@ def _COP(T_feed: float) -> float:
     if T_feed > 60:
         return 1
 
-    if delta_T <= 11:
+    if delta_T <= 9:
         return 2
     else:
-        return (11 * 2 + (delta_T - 11) * 1) / delta_T
+        return (9 * 2 + (delta_T - 9) * 1) / delta_T
 
 
 def create_model_from_slope(
