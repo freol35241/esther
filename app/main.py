@@ -28,6 +28,8 @@ class Config:
 
 config = Config()
 
+last_known_solution = None
+
 
 def run(cmd_args: argparse.Namespace):
     """Main function setting up and running the gateway functionality
@@ -63,6 +65,8 @@ def run(cmd_args: argparse.Namespace):
         return pointer.resolve(obj)
 
     def run_optimization(x):
+        global last_known_solution
+
         T_outdoor_current, T_indoor_current = x
         prices = fetch_nordpool_data(cmd_args.nordpool_price_area)
         outdoor_temperatures = fetch_smhi_temperatures(
@@ -90,16 +94,25 @@ def run(cmd_args: argparse.Namespace):
             config.T_feed_maximum,
         )
 
-        res = opt.solve_problem(
-            problem,
-            list(
+        initial_guess = (
+            last_known_solution
+            if (
+                last_known_solution is not None
+                and len(last_known_solution) == len(prices)
+            )
+            else list(
                 map(
                     partial(
                         dynamic_model.make_T_feed_guesstimate, heating_system_model, 20
                     ),
                     outdoor_temperatures,
                 )
-            ),
+            )
+        )
+
+        res = opt.solve_problem(
+            problem,
+            initial_guess=initial_guess,
             maxiter=cmd_args.max_iter,
         )
 
@@ -112,6 +125,8 @@ def run(cmd_args: argparse.Namespace):
             logging.error("Solver failed: %s", res.message)
             if not cmd_args.allow_failing_solutions:
                 return
+
+        last_known_solution = res.x
 
         logging.info("New target feed temperature: %s", res.x[0])
         return res.x[0]
