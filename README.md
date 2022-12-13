@@ -46,12 +46,14 @@ General configuration:
   --allow-failing-solutions
                         Allow failing solutions to the optimization problem to publish target feed temperatures. (default: False)
   --sensor-timeout SENSOR_TIMEOUT
-                        Maximum allowed time (s) between sensor readings (T-indoor and T-outdoor). If exceeded, no new optimal feed temperature will be calculated and outputted until sensor readings are within the given timeout again. (default:     
+                        Maximum allowed time (s) between sensor readings (T-indoor and T-outdoor). If exceeded, no new optimal feed temperature will be calculated and outputted until sensor readings are within the given timeout again. (default:    
                         600)
   --T-indoor-requested T_INDOOR_REQUESTED
                         Requested indoor temperature (default: 20.0)
-  --T-indoor-bounds T_INDOOR_BOUNDS
-                        Allowed bounds of indoor temperature relative to T-indoor-requested. (default: (-2, 2))
+  --T-indoor-bound-lower T_INDOOR_BOUND_LOWER
+                        Allowed bounds of indoor temperature relative to T-indoor-requested. (default: -1)
+  --T-indoor-bound-upper T_INDOOR_BOUND_UPPER
+                        Allowed bounds of indoor temperature relative to T-indoor-requested. (default: 1)
   --T-feed-maximum T_FEED_MAXIMUM
                         Maximum allowable feed temperature (default: 60.0)
   --nordpool-price-area NORDPOOL_PRICE_AREA
@@ -83,8 +85,11 @@ Heating system configuration:
                         Time constant (hours) of changes in indoor temperature subject to changes in outdoor temperature (default: 125)
   --T-feed-time-constant T_FEED_TIME_CONSTANT
                         Time constant (hours) of changes in indoor temperature subject to changes in feed temperature (default: None)
-  --T-feed-time-constant-from-IVT490-heating-curve-slope T_FEED_TIME_CONSTANT_FROM_IVT490_HEATING_CURVE_SLOPE
-                        Heating curve slope value, IVT490-style. (default: None)
-  ```
+  --heater-type {electric,IVT490}
+                        Type of heater, used for COP value estimations. (default: electric)
+
+Optimization algorithm configuration:
+  --max-iter MAX_ITER   Maximum number of iterations allowed in the optimization algorithms (default: 500)
+```
 
 

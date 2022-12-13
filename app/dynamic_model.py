@@ -14,6 +14,14 @@ class ModelParameters:
     COP_feed: Callable = None
 
 
+def make_T_feed_guesstimate(
+    parameters: ModelParameters, T_indoor: float, T_outdoor: float
+) -> float:
+    k_outdoor = 1 / (parameters.T_outdoor_time_constant * 3600)
+    k_feed = 1 / (parameters.T_feed_time_constant * 3600)
+    return (k_outdoor / k_feed) * (T_indoor - T_outdoor) + T_indoor
+
+
 def _analytical_solution(
     parameters: ModelParameters,
     T_indoor_0: float,

@@ -45,20 +45,14 @@ def run(cmd_args: argparse.Namespace):
     config.T_feed_maximum = cmd_args.T_feed_maximum
     config.sensor_timeout = cmd_args.sensor_timeout
 
-    # Configure heating system model
-    if cmd_args.T_feed_time_constant:
+    if cmd_args.heater_type == "electric":
         heating_system_model = dynamic_model.ModelParameters(
             cmd_args.T_outdoor_time_constant, cmd_args.T_feed_time_constant
         )
-        initial_guess_func = lambda x: np.ones_like(x) * 25
-    elif cmd_args.T_feed_time_constant_from_IVT490_heating_curve_slope:
-        heating_system_model = IVT490.create_model_from_slope(
-            cmd_args.T_feed_time_constant_from_IVT490_heating_curve_slope,
-            cmd_args.T_outdoor_time_constant,
-        )
-        initial_guess_func = partial(
-            IVT490.make_initial_guess,
-            cmd_args.T_feed_time_constant_from_IVT490_heating_curve_slope,
+
+    elif cmd_args.heater_type == "IVT490":
+        heating_system_model = dynamic_model.ModelParameters(
+            cmd_args.T_outdoor_time_constant, cmd_args.T_feed_time_constant, IVT490.COP
         )
     else:
         # Should not happen
@@ -98,7 +92,14 @@ def run(cmd_args: argparse.Namespace):
 
         res = opt.solve_problem(
             problem,
-            initial_guess_func(outdoor_temperatures),
+            list(
+                map(
+                    partial(
+                        dynamic_model.make_T_feed_guesstimate, heating_system_model, 20
+                    ),
+                    outdoor_temperatures,
+                )
+            ),
             maxiter=cmd_args.max_iter,
         )
 
@@ -306,16 +307,17 @@ if __name__ == "__main__":
         default=dynamic_model.DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT,
         help="Time constant (hours) of changes in indoor temperature subject to changes in outdoor temperature",
     )
-    thermal_exclusive_group = thermal_group.add_mutually_exclusive_group(required=True)
-    thermal_exclusive_group.add_argument(
+    thermal_group.add_argument(
         "--T-feed-time-constant",
         type=float,
+        required=True,
         help="Time constant (hours) of changes in indoor temperature subject to changes in feed temperature",
     )
-    thermal_exclusive_group.add_argument(
-        "--T-feed-time-constant-from-IVT490-heating-curve-slope",
-        type=float,
-        help="Heating curve slope value, IVT490-style.",
+    thermal_group.add_argument(
+        "--heater-type",
+        choices=["electric", "IVT490"],
+        default="electric",
+        help="Type of heater, used for COP value estimations.",
     )
 
     opt_group = parser.add_argument_group(title="Optimization algorithm configuration")
