@@ -84,12 +84,18 @@ def prepare_optimization_problem(
         return np.concatenate([lower, upper])
 
     def _equality_constraints(T_feed: np.ndarray) -> np.ndarray:
-        return (
-            simulate(
-                model, current_indoor_temperature, T_feed, outdoor_temperatures, delta_t
-            )[-1]
-            - requested_indoor_temperature
+        indoor_temperatures = simulate(
+            model, current_indoor_temperature, T_feed, outdoor_temperatures, delta_t
         )
+
+        mean_temperature_constraint = (
+            indoor_temperatures.mean() - requested_indoor_temperature
+        )
+        final_temperature_constraint = (
+            indoor_temperatures[-1] - requested_indoor_temperature
+        )
+
+        return [mean_temperature_constraint, final_temperature_constraint]
 
     return ProblemDefinition(
         size=len(outdoor_temperatures),
