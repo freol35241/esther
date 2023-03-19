@@ -87,7 +87,6 @@ class from_mqtt(from_q):
         client_kwargs=None,
         **kwargs
     ):
-
         self.host = host
         self.port = port
         self.username = username

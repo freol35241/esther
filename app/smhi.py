@@ -7,7 +7,6 @@ SMHI_API_URL = "https://opendata-download-metfcst.smhi.se/api/category/pmp3g/ver
 
 
 def fetch_smhi_temperatures(longitude: float, latitude: float) -> list:
-
     url = SMHI_API_URL.format(longitude=longitude, latitude=latitude)
 
     response = requests.get(url)

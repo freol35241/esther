@@ -11,7 +11,6 @@ THIS_DIR = Path(__file__).parent
 
 
 def test_fetch_nordpool_data(pinned):
-
     with requests_mock.Mocker() as mock, patch(
         "app.nordpool._get_break_point_time"
     ) as time_wrapper:
