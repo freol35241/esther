@@ -37,7 +37,7 @@ def simulate(
     T_indoor = []
     Ti = T_indoor_now
 
-    for (Tf, To, dt) in zip(T_feed, T_outdoor, delta_t):
+    for Tf, To, dt in zip(T_feed, T_outdoor, delta_t):
         Ti = _analytical_solution(parameters, Ti, Tf, To, dt)
         T_indoor.append(Ti)
 

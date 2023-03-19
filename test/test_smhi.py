@@ -8,7 +8,6 @@ THIS_DIR = Path(__file__).parent
 
 
 def test_fetch_smhi_temperatures(pinned):
-
     with requests_mock.Mocker() as mock:
         mock.get(
             "https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/11/lat/56/data.json",

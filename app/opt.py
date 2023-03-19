@@ -30,7 +30,6 @@ def prepare_optimization_problem(
     maximum_indoor_temperature: float,
     maximum_feed_temperature: float,
 ) -> ProblemDefinition:
-
     electricity_prices = np.asarray(electricity_prices)
     outdoor_temperatures = np.asarray(outdoor_temperatures)
     delta_t = np.asarray(delta_t)

@@ -16,7 +16,6 @@ def _get_break_point_time():
 
 
 def fetch_nordpool_data(price_area: str) -> np.ndarray:
-
     url = NORDPOOL_API_URL.format(price_area=price_area)
 
     response = requests.get(url)

@@ -22,7 +22,6 @@ def create_model_from_slope(
     heating_curve_slope: float,
     house_cooldown_time_constant: float = DEFAULT_HOUSE_COOLDOWN_TIME_CONSTANT,
 ) -> ModelParameters:
-
     assumed_T_outdoor = 0.0
     assumed_T_indoor = 20.0
     resulting_T_feed = _heating_curve(heating_curve_slope, assumed_T_outdoor)
