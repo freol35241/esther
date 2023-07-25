@@ -1,2 +1,2 @@
 matplotlib==3.7.1
-ipykernel==6.23.1
+ipykernel==6.25.0
