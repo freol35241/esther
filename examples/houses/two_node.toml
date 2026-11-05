@@ -1,0 +1,41 @@
+# The smallest useful house: the classic 2R2C envelope (spec §4.5.1) heated by
+# an air-to-water heat pump through radiators, with no tank. Generic values.
+schema = 1
+name = "two-node"
+step = "15min"
+horizon = "36h"
+
+[[component]]
+type = "Ambient"
+name = "outdoor"
+signal = "outdoor_temperature"
+
+[[component]]
+type = "Zone"
+name = "house"
+prior.C = { median = "6 MJ/K", gsd = 2.0 }
+
+[[component]]
+type = "Mass"
+name = "fabric"
+zone = "house"
+prior.C = { median = "40 MJ/K", gsd = 3.0 }
+
+[[component]]
+type = "Coupling"
+between = ["house", "outdoor"]
+prior.UA = { median = "100 W/K", gsd = 2.0 }
+
+[[component]]
+type = "HeatPump"
+name = "heat_pump"
+sink = "house"
+source = "outdoor"
+Q_rated = "5 kW"
+
+[[component]]
+type = "ComfortBand"
+zone = "house"
+setpoint = "21 °C"
+band = "0.5 K"
+floor = "17 °C"
