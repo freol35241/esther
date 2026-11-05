@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "esther"
+dynamic = ["version"]
+description = "Economic MPC for house heating over a self-learning grey-box thermal model"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Fredrik Olsson" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pandas>=2.1",
+    # MILP modelling and solver (spec §3.2; cvxpy over linopy chosen by the
+    # M0 spike, benchmarks/reference_milp.py)
+    "cvxpy>=1.6",
+    "highspy>=1.7",
+]
+
+[project.optional-dependencies]
+# Readers live in esther.io and are extras only (spec §3.1).
+homeostat = []
+# The M0 spike's comparison backend; not used by esther itself.
+spike = ["linopy>=0.4"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[project.urls]
+Repository = "https://github.com/freol35241/esther"
+Specification = "https://github.com/freol35241/esther/blob/master/docs/spec.md"
+
+# Every component type, esther's own included, is registered here — the same
+# entry-point group a third-party package uses (spec §5).
+[project.entry-points."esther.components"]
+Zone = "esther.components.envelope:Zone"
+Mass = "esther.components.envelope:Mass"
+Ambient = "esther.components.envelope:Ambient"
+Coupling = "esther.components.envelope:Coupling"
+Radiators = "esther.components.hydronic:Radiators"
+JacketTank = "esther.components.hydronic:JacketTank"
+HeatPump = "esther.components.sources:HeatPump"
+ElectricHeater = "esther.components.sources:ElectricHeater"
+Stove = "esther.components.sources:Stove"
+HotWaterDraw = "esther.components.loads:HotWaterDraw"
+Tariff = "esther.components.economics:Tariff"
+ComfortBand = "esther.components.economics:ComfortBand"
+DhwService = "esther.components.economics:DhwService"
+
+[tool.hatch.version]
+path = "esther/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["esther"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # Greek letters and unit symbols in prose are intended
