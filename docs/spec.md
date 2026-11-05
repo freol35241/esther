@@ -147,8 +147,9 @@ MUST NOT import anything from `io`. Readers are optional extras
 ### 3.2 Dependencies
 
 numpy, scipy, pandas (dataset handling only), cvxpy with HiGHS for the MILP
-(open: cvxpy vs linopy, decided in M0 by a timing spike on the reference
-problem), tomllib (stdlib). No CasADi, no JAX in v1; revisit if the fit needs
+(decided in M0 by the timing spike `benchmarks/reference_milp.py`: on the same
+problem and solver, cvxpy builds in ~0.02 s against linopy's ~3 s, and its
+parameters give warm-started re-solves), tomllib (stdlib). No CasADi, no JAX in v1; revisit if the fit needs
 automatic differentiation.
 
 ---
@@ -754,7 +755,7 @@ confidence interval; the winter is long enough for an answer.
 
 ## 12. Open questions
 
-1. **Modelling language.** cvxpy vs linopy for the MILP (M0 spike).
+1. ~~**Modelling language.**~~ Decided in M0: cvxpy (§3.2).
 2. **Emitter law.** Linear `UA_rad` vs `UA (ΔT)^n`; decided in M2 on residuals.
 3. **Zones.** One zone, or a zone per heat-source location (a stove heats one
    room hard). M2 compares; the description supports both.
