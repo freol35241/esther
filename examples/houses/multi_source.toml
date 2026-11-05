@@ -1,0 +1,103 @@
+# A generic multi-source house: 2R2C envelope, a double-jacket tank feeding the
+# radiators and the hot water, a heat pump and an electric heater on the tank,
+# and a pellet stove in the living space. The shape of spec Appendix A's
+# reference plant, with made-up round numbers — not any real house.
+schema = 1
+name = "multi-source"
+step = "15min"
+horizon = "36h"
+
+[[component]]
+type = "Ambient"
+name = "outdoor"
+signal = "outdoor_temperature"
+
+[[component]]
+type = "Zone"
+name = "living"
+prior.C = { median = "8 MJ/K", gsd = 2.0 }
+
+[[component]]
+type = "Mass"
+name = "fabric"
+zone = "living"
+prior.C = { median = "60 MJ/K", gsd = 3.0 }
+prior.UA = { median = "600 W/K", gsd = 3.0 }
+
+[[component]]
+type = "Coupling"
+name = "envelope"
+between = ["living", "outdoor"]
+prior.UA = { median = "120 W/K", gsd = 2.0 }
+
+[[component]]
+type = "Coupling"
+name = "fabric_loss"
+between = ["fabric", "outdoor"]
+prior.UA = { median = "20 W/K", gsd = 3.0 }
+
+[[component]]
+type = "JacketTank"
+name = "tank"
+volume_jacket = "60 l"
+volume_dhw = "180 l"
+room = "living"
+
+[[component]]
+type = "Radiators"
+zone = "living"
+source = "tank.jacket"
+supply_signal = "supply_temperature"
+
+[[component]]
+type = "HeatPump"
+name = "heat_pump"
+sink = "tank.jacket"
+source = "outdoor"
+Q_rated = "2 kW"
+min_on = "1 h"
+min_off = "30 min"
+
+[[component]]
+type = "ElectricHeater"
+name = "immersion"
+node = "tank.jacket"
+max = "9 kW"
+steps = 3
+
+[[component]]
+type = "Stove"
+name = "stove"
+zone = "living"
+levels = [ { heat = "1 kW", fuel = "0.25 kg/h" },
+           { heat = "3.5 kW", fuel = "0.8 kg/h" },
+           { heat = "7 kW", fuel = "1.55 kg/h" } ]
+efficiency = 0.85
+fuel = "pellets"
+min_on = "2 h"
+min_off = "1 h"
+prior.t_ign = { median = "20 min", gsd = 1.5 }
+
+[[component]]
+type = "HotWaterDraw"
+node = "tank.dhw"
+mains_temperature = "8 °C"
+
+[[component]]
+type = "Tariff"
+spot_signal = "spot_price"
+energy_fee = "0.10 EUR/kWh"
+vat = 0.25
+fuel_price = { pellets = "0.40 EUR/kg" }
+
+[[component]]
+type = "ComfortBand"
+zone = "living"
+setpoint = "21 °C"
+band = "0.5 K"
+floor = "17 °C"
+
+[[component]]
+type = "DhwService"
+node = "tank.dhw"
+min_temp = "45 °C"
