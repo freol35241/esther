@@ -31,7 +31,7 @@ homeostat = []
 # The M0 spike's comparison backend; not used by esther itself.
 spike = ["linopy>=0.4"]
 dev = [
-    "pytest>=8",
+    "pytest>=9.2.0",
     "ruff>=0.6",
 ]
 
