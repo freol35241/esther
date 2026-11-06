@@ -1,6 +1,6 @@
 # esther v1 — specification
 
-Status: **agreed; being built** (M0 merged, M1 in review; §11). The v0 line
+Status: **agreed; being built** (M0 and M1 merged, M2 in review; §11). The v0 line
 (single-state model, hand-set parameters, SLSQP, MQTT service) is preserved at
 tag `v0-legacy`; the unmerged dev line ends at `v0.4.0_dev9`. v1 is a rewrite in
 the same repository, not an increment.
@@ -221,6 +221,28 @@ by precomputation per step:
 - **Mixing limits** (a shunt cannot deliver hotter than its source) are linear
   inequalities on heat rates and temperatures (§4.5.3).
 
+As built in M2 (`esther.core.model`):
+
+- A component contributes **terms** — `Capacity`, `Conductance`, `Gain`,
+  `Decision`, `Noise`, `Measurement` — as a function of its own parameter
+  values; which terms exist does not depend on the values. The core sums them
+  into `A, B, E, Qc, H, c, R`.
+- A conductance MAY be **modulated** by a measured signal `s ∈ [0, 1]` (a
+  radiator circuit whose pump runs part of a step). Then
+  `A_k = A_0 + Σ_j s_{j,k} A_j` and likewise `E`; the model stays linear in
+  the states. Modulation values are rounded to multiples of 1/20 and the model
+  is discretised once per distinct combination in the data.
+- Process noise is per node, `sigma_w`: the standard deviation (K) its
+  temperature diffuses by in one hour with every input known
+  (`Qc = sigma_w² / 3600` K²/s). Measurement noise is per sensor, `sigma_v`
+  (K). Both are fitted. **On an unmeasured node, pin `sigma_w` small** in the
+  house file: it is barely identified, and on real data a free one lets the
+  fit turn the node into a coloured-noise generator that absorbs every
+  unmodelled input — the best one-step likelihood and a poor open-loop
+  prediction (M2 met exactly this).
+- A measurement `y_k` is the step's mean and is taken as observing the state
+  at the step's start; inputs are the step's means, held over it.
+
 ### 4.4 Composition
 
 Components attach by **port name**. A node is created by the component that
@@ -240,7 +262,10 @@ capacity (J/K), `UA` conductance (W/K), `Q` heat rate (W), `P` electrical power
 
 - **`Zone`** — an air node. `C_air dT_z/dt = Σ Q_in`. Measured by one or more
   room sensors, each with its own bias parameter (a sensor on a cold wall reads
-  low; that is a bias, not a dynamic).
+  low; that is a bias, not a dynamic). *As built:* the zone's `signal` is its
+  reference sensor and defines the zone temperature (no bias — with one sensor
+  a bias is not separable from the heat balance); each further sensor is a
+  **`Sensor`** component (`node`, `signal`, parameters `bias`, `sigma_v`).
 - **`Mass`** — a building-fabric node coupled to a zone: `C_m dT_m/dt =
   UA_zm (T_z − T_m) + f_solar_m · Q_sol`. Unmeasured; it is the house's heat
   store and the reason a 1-state model cannot plan pre-heating.
@@ -249,7 +274,10 @@ capacity (J/K), `UA` conductance (W/K), `Q` heat rate (W), `P` electrical power
 - **`Ambient`** — a boundary: outdoor air, from a measurement or forecast.
 - **`Ventilation`** — a coupling to ambient whose conductance is
   `ρ c_p V̇` with the flow `V̇` known or fitted. For an exhaust-air heat pump the
-  extracted air passes the evaporator; see 4.5.3.
+  extracted air passes the evaporator; see 4.5.3. With a constant flow it is
+  indistinguishable from a `Coupling` to the same boundary: only the sum is in
+  the data, so one of the two must be pinned (M2's identifiability control
+  shows the fit flagging exactly this).
 
 The default house is `Zone + Mass + Coupling(zone, ambient) + Coupling(mass,
 ambient)` — the classic 2R2C. M2 compares 1-, 2- and 3-node structures and the
@@ -262,7 +290,18 @@ house description chooses.
   `g_A` is fitted and split between zone and mass by `f_solar_m`.
 - **`InternalGain`** — a time-of-week profile (24 × 7 hourly values, smoothed,
   fitted with a smoothness prior), optionally scaled by occupancy. Absorbs
-  people, cooking and appliances.
+  people, cooking and appliances. *As built (M2):* the profile is a mean `Q`
+  plus `harmonics` (0–4) Fourier terms of a `period` (default a day; a week
+  gives a time-of-week profile), with zero-mean normal priors on the
+  amplitudes that shrink as `1/k` — the smoothness prior in its spectral form.
+  Time is UTC. Occupancy scaling is not built.
+- **`HeatInput`** — a measured heat input (or a proxy proportional to one):
+  `Q = gain · signal` into a node. This is how §6.4's "sources enter as measured
+  heat inputs where measured" is written, and how §7.5's unplanned heat enters.
+
+Every gain MAY split its heat between its node and a `mass` node by `f_mass`.
+A gain coefficient is "W per SI unit of its signal", so it is declared
+dimensionless.
 - **`ElectricalLoadGain`** — optional: a fraction of a measured household
   electrical load ends up as heat.
 
@@ -277,6 +316,10 @@ house description chooses.
     node the circuit mixes from — the shunt can only mix down, never up.
   - *Measurement form (identification):* with the supply temperature measured,
     `Q_rad = UA_rad (T_supply,meas − T_z)` is an input, and `UA_rad` is fitted.
+    *As built:* a conductance from the zone to the measured supply, modulated
+    by `flow_signal` (the circulation pump's on-fraction) when given — with the
+    pump off the supply sensor reads the pipe, not the radiators. `source` is
+    needed for planning only.
 - **`JacketTank`** — a double-jacket tank: an outer jacket of heating water and
   an inner vessel of domestic hot water. Two nodes (`jacket`, `dhw`), coupled by
   `UA_jd`. Sources heat the jacket; the radiator circuit draws from the jacket;
@@ -478,6 +521,21 @@ As built in M1 (`esther.data`):
   correlation. A parameter whose interval is not narrower than its prior's by a
   configured factor is reported as *not identified by the data* — the fit still
   stands, resting on the prior for that parameter, and the report says so.
+- *As built (M2):* the fit works in standardised prior coordinates
+  `u = (t − t_prior) / s_prior` (`t = log θ` for a log-normal prior), so the
+  log-prior is `½|u|²` and its Hessian the identity. The per-parameter test
+  alone misses a **combination** the data cannot see while each member's prior
+  props it up. The data's information is `H − I`; its eigen-directions with
+  eigenvalue below `factor² − 1` are directions along which the data shrink the
+  prior sd by less than the factor. They are reported, and a parameter whose
+  posterior variance comes mostly from them is also *not identified*. Default
+  factor 2.
+- **The scale of a thermal model.** Multiplying every capacity, conductance and
+  heat-input gain by one factor leaves every temperature unchanged. So
+  temperatures alone identify time constants and ratios, never watts: the
+  absolute scale comes from the one heat input whose size is known (a rated
+  heater, a stove's nominal output, a heat meter) or else from the priors, and
+  the report says which.
 
 ### 6.3 Draw detection (hot water without a flow meter)
 
@@ -524,6 +582,22 @@ A new fit is **accepted** only if its 24 h open-loop RMSE on the zone
 temperature is not worse than the current fit's on the same held-out window,
 and no parameter sits on a bound. Otherwise the current fit stays and the
 refusal is reported with the numbers.
+
+As built in M2 (`esther.identify.validate`):
+
+- Open-loop windows start every `stride` (default 1 h) from each held-out
+  segment's start, from the **filter's state estimate** at that step (the
+  state a planner would start from; at the segment start that is the prior
+  updated with one measurement). `RMSE_h` is over all lead times `1 … h` of
+  the windows with the full `h` before the segment ends; the error at lead `h`
+  alone is reported beside it.
+- **Persistence** — the measurement at the window start, held — is scored on
+  the same windows. With no current fit, persistence is the reference the gate
+  compares with.
+- A gate with **no window of 24 h** in the held-out data refuses: no evidence is
+  not a pass.
+- A Hessian that is not positive definite, and parameters not identified by
+  the data, are reported with the decision, not gating.
 
 ### 6.6 Online state estimation
 
@@ -784,8 +858,17 @@ confidence interval; the winter is long enough for an answer.
 
 1. ~~**Modelling language.**~~ Decided in M0: cvxpy (§3.2).
 2. **Emitter law.** Linear `UA_rad` vs `UA (ΔT)^n`; decided in M2 on residuals.
+   *M2:* linear kept. On the reference plant's first autumn the two laws are
+   indistinguishable — the same likelihood and the same open-loop score when the
+   radiator heat is written as an exogenous input, `δ_pump (T_supply − T_ref)^n`
+   with n = 1 and n = 1.3. Revisit with winter data, when the supply
+   temperatures spread wider.
 3. **Zones.** One zone, or a zone per heat-source location (a stove heats one
-   room hard). M2 compares; the description supports both.
+   room hard). M2 compares; the description supports both. *M2:* on the
+   reference plant a whole-house sensor answers a stove burn about an hour
+   late; a node between the stove and the zone (a `Mass` on the zone, heated
+   by the stove's `HeatInput`) carries that lag and is what the fit chose. A
+   separately measured stove room was not tried.
 4. **Ventilation and exhaust-air sources.** Whether an exhaust-air heat pump's
    source temperature can be taken as the zone temperature (it is the extract
    air) — probably, M1 checks.

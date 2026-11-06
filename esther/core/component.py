@@ -13,10 +13,17 @@ boundaries it imposes and the conductances it creates. That is enough to
 validate a house (every port resolves, every node has a path to a boundary,
 every source has a node to heat).
 
-The remaining contributions of §4.1 — dynamics, decisions, constraints, cost,
-measurements, actuation — are added to this class in M2–M4. They are not
-stubbed here: an interface written before its first implementation would be a
-guess with the authority of code.
+From M2, a component also contributes its **dynamics and measurements**
+(§4.1, §4.3): :meth:`Component.dynamics` returns linear terms
+(:mod:`esther.core.model`) as a function of the component's parameter values,
+and :meth:`Component.active_params` says which of its parameters those terms
+use. A component that does not override ``dynamics`` has none in this
+version (the tank and source types until M3) and is skipped by
+:func:`esther.core.model.compose`.
+
+The remaining contributions — decisions with their constraints and cost, and
+actuation — are added in M4. They are not stubbed here: an interface written
+before its first implementation would be a guess with the authority of code.
 """
 
 from __future__ import annotations
@@ -277,6 +284,21 @@ class Component:
     def check(self) -> list[tuple[str | None, str]]:
         """Cross-field sanity checks: ``[(key or None, message), ...]``."""
         return []
+
+    # -- dynamics (spec §4.3) ----------------------------------------------
+    def dynamics(self, p: Mapping[str, float], mode: str) -> list[Any]:
+        """Linear terms (:mod:`esther.core.model`) for parameter values ``p``
+        (this component's, by local name). ``mode`` is ``"identify"`` or
+        ``"plan"``. Which terms exist MUST NOT depend on the values in ``p``."""
+        raise NotImplementedError(f"{self.type_name or type(self).__name__} has no dynamics yet")
+
+    def active_params(self, mode: str) -> list[str]:
+        """The parameters :meth:`dynamics` uses in ``mode`` (default: all)."""
+        return [p.name for p in self.params]
+
+    def boundary_signals(self) -> dict[str, str]:
+        """Boundary name → the signal that gives its temperature."""
+        return {}
 
     # -- helpers -----------------------------------------------------------
     @classmethod

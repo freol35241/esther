@@ -46,6 +46,11 @@ Zone = "esther.components.envelope:Zone"
 Mass = "esther.components.envelope:Mass"
 Ambient = "esther.components.envelope:Ambient"
 Coupling = "esther.components.envelope:Coupling"
+Ventilation = "esther.components.envelope:Ventilation"
+Sensor = "esther.components.envelope:Sensor"
+SolarGain = "esther.components.gains:SolarGain"
+InternalGain = "esther.components.gains:InternalGain"
+HeatInput = "esther.components.gains:HeatInput"
 Radiators = "esther.components.hydronic:Radiators"
 JacketTank = "esther.components.hydronic:JacketTank"
 HeatPump = "esther.components.sources:HeatPump"
@@ -64,6 +69,7 @@ packages = ["esther"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "-ra"
 
 [tool.ruff]
