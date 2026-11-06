@@ -101,3 +101,48 @@ floor = "17 °C"
 type = "DhwService"
 node = "tank.dhw"
 min_temp = "45 °C"
+
+# What identification needs to know about this house's history (spec §6.1).
+# Signal names only; where each one's history lives is the integration's
+# address map. Masks are in the signal's recorded units.
+[dataset]
+step = "5min"
+min_segment = "2h"
+tolerance = "15min"
+
+[[dataset.exclude]]
+start = 2025-01-10T06:00:00Z
+duration = "8 h"
+reason = "power cut"
+
+[dataset.signal.outdoor_temperature]
+unit = "°C"
+range = [-45, 45]
+spike = { threshold = 4.0 }
+
+[dataset.signal.indoor_temperature]
+unit = "°C"
+range = [5, 35]
+tolerance = "30min"
+
+[dataset.signal.supply_temperature]
+unit = "°C"
+range = [5, 85]
+spike = { threshold = 5.0 }
+stuck = "12 h"
+
+[dataset.signal.tank_top_temperature]
+unit = "°C"
+range = [5, 95]
+invalid_values = [-50.0]
+
+[dataset.signal.compressor]
+kind = "binary"
+
+[dataset.signal.heater_power]
+unit = "kW"
+range = [0, 12]
+
+[dataset.signal.stove_state]
+kind = "categorical"
+required = false

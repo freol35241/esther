@@ -1,6 +1,6 @@
 # esther v1 — specification
 
-Status: **draft for review.** Nothing in this document is built yet. The v0 line
+Status: **agreed; being built** (M0 merged, M1 in review; §11). The v0 line
 (single-state model, hand-set parameters, SLSQP, MQTT service) is preserved at
 tag `v0-legacy`; the unmerged dev line ends at `v0.4.0_dev9`. v1 is a rewrite in
 the same repository, not an increment.
@@ -444,6 +444,28 @@ Rules:
 - Periods the house description marks as non-representative (an outage, a
   manual override, a deliberately wrong setpoint) are excluded by date range.
 
+As built in M1 (`esther.data`):
+
+- The house file's optional `[dataset]` table declares the step, the minimum
+  segment length, the exclusion windows (`[[dataset.exclude]]`, UTC
+  date-times with an explicit offset) and, per signal
+  (`[dataset.signal.<name>]`), its kind (`analog`, `binary`, `categorical`),
+  whether it is required for a segment, its unit, its tolerance, and its masks:
+  `range`, `invalid_values` (sentinels), `spike` (distance from a centred
+  running median, in samples) and `stuck` (an unchanged value for longer than a
+  duration). Masks are written in the units the history is recorded in.
+- Each sample **holds** its value until the next sample, for at most the
+  signal's tolerance and never into an exclusion window. A step's value is the
+  time-weighted mean of the held values (for a binary signal, the on-fraction;
+  for a categorical one, the value held longest), and its coverage is the share
+  of the step a held value covers. A step is valid for a signal when its
+  coverage reaches `min_coverage` (default 1). Masked samples are dropped, so
+  the previous sample holds over them within the tolerance; a run of masked
+  samples longer than the tolerance becomes a gap. Holding within the tolerance
+  is the only bridging there is; past it, the step is missing.
+- The address of each signal in a history store is not in the house file: the
+  integration passes its address map to `read_signals` (§5, §9.1).
+
 ### 6.2 Estimation
 
 - **Method:** continuous-discrete linear Kalman filter; negative log-likelihood
@@ -674,7 +696,12 @@ homeostat unit — owns:
 ### 9.1 Inputs it provides
 
 - A **history reader** that returns named signals with timestamps and validity,
-  for the dataset builder.
+  for the dataset builder (`esther.data.HistorySource`: `read(address, start,
+  end)` → a UTC-indexed series). esther ships one optional reader,
+  `esther.io.homeostat`, for a homeostat history store: SQLite files (a live
+  file and sealed archives) merged on the series key, opened read-only —
+  `mode=ro`, or `immutable` where the caller accepts that a concurrent write
+  can surface as an error or a torn read.
 - **Live measurements** by signal name, with their age.
 - **Forecast sources** (raw forecasts with issue times) for esther's
   forecasters.
