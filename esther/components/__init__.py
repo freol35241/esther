@@ -4,8 +4,10 @@ Each module defines component classes; they are registered by name through the
 ``esther.components`` entry points in ``pyproject.toml`` — the same mechanism a
 third-party package uses.
 
-M0 status: these classes declare their configuration, ports and parameters
-(enough for the house loader to validate a house) and their place in the
-thermal graph. Their dynamics, decisions, constraints and costs arrive in
-M2 (envelope, gains, radiators) and M3 (tanks, sources, wrappers).
+Status: every class declares its configuration, ports and parameters (enough
+for the house loader to validate a house) and its place in the thermal graph.
+The envelope (``Zone``, ``Mass``, ``Coupling``, ``Ambient``, ``Ventilation``,
+``Sensor``), the gains (``SolarGain``, ``InternalGain``, ``HeatInput``) and
+``Radiators`` also contribute their dynamics (M2). Tanks, sources and wrappers
+follow in M3; decisions, constraints and costs in M4.
 """
