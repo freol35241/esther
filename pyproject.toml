@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "numpy>=1.26",
+    "numpy>=2.4.6",
     "scipy>=1.11",
     "pandas>=2.1",
     # MILP modelling and solver (spec §3.2; cvxpy over linopy chosen by the
