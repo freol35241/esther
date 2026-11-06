@@ -33,6 +33,7 @@ __all__ = [
     "Dimension",
     "UnitError",
     "parse_quantity",
+    "si_conversion",
 ]
 
 CELSIUS_OFFSET = 273.15
@@ -180,6 +181,17 @@ def _parse_unit(expr: str) -> tuple[float, Dimension]:
             else:
                 factor, dim = factor / f, dim / d
     return factor, dim
+
+
+def si_conversion(unit: str) -> tuple[float, float, Dimension]:
+    """``(factor, offset, dimension)`` such that ``si = factor * x + offset``
+    for a value ``x`` recorded in ``unit``. ``"°C"`` is the one affine unit
+    (an absolute temperature, to K); every other unit is a pure factor."""
+    u = unit.strip()
+    if u in _CELSIUS:
+        return 1.0, CELSIUS_OFFSET, TEMPERATURE
+    factor, dim = _parse_unit(u)
+    return factor, 0.0, dim
 
 
 def parse_quantity(

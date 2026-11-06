@@ -21,6 +21,11 @@ duplicate names, values with the wrong unit or out of range, priors that do
 not fit their parameter, ports that name nothing (or the wrong kind of
 thing), sources that would heat a boundary, and nodes with no conductance
 path to a boundary (their temperature would be unbounded, §4.4).
+
+An optional ``[dataset]`` table declares what identification needs to know
+about the house's history — signals, masks, exclusion windows (§6.1); it is
+validated by :func:`esther.data.parse_dataset_config` and its problems are
+reported in the same list.
 """
 
 from __future__ import annotations
@@ -38,11 +43,12 @@ from .core.component import Component, FieldError, Port
 from .core.params import Param, parse_prior
 from .core.registry import Registry, RegistryError, default_registry
 from .core.units import TIME, UnitError, parse_quantity
+from .data.config import DatasetConfig, parse_dataset_config
 
 __all__ = ["SCHEMA_VERSION", "House", "HouseError", "Issue", "load_house", "loads_house"]
 
 SCHEMA_VERSION = 1
-_TOP_LEVEL_KEYS = ("schema", "name", "step", "horizon", "component")
+_TOP_LEVEL_KEYS = ("schema", "name", "step", "horizon", "component", "dataset")
 _COMPONENT_BASE_KEYS = ("type", "name", "prior")
 
 
@@ -90,6 +96,7 @@ class House:
     signals: tuple[str, ...]
     source: str = "<string>"
     order: tuple[str, ...] = field(default=())
+    dataset: DatasetConfig | None = None  # the [dataset] table (spec §6.1), if any
 
     @property
     def n_steps(self) -> int:
@@ -109,6 +116,7 @@ class _SourceMap:
 
     _HEADER = re.compile(r"^\s*\[\[\s*component\s*\]\]")
     _TABLE = re.compile(r"^\s*\[")
+    _OTHER = re.compile(r"^\s*\[(?!\[?\s*component\s*[\].])")
 
     def __init__(self, text: str) -> None:
         self.lines = text.splitlines()
@@ -120,6 +128,24 @@ class _SourceMap:
         for i in range(start, min(end, len(self.lines))):
             if pat.match(self.lines[i]):
                 return i + 1
+        return None
+
+    def table(self, dotted: str) -> int | None:
+        """Line of a key under a ``[table]`` / ``[[table]]`` header: the most
+        specific header that is a prefix of ``dotted``, then the key in it."""
+        parts = re.sub(r"\[\d+\]", "", dotted).split(".")
+        for n in range(len(parts), 0, -1):
+            head = ".".join(parts[:n])
+            pat = re.compile(rf"^\s*\[\[?\s*{re.escape(head)}\s*\]\]?")
+            hits = [i for i, ln in enumerate(self.lines) if pat.match(ln)]
+            if hits:
+                start = hits[0] + 1
+                end = next(
+                    (i for i in range(start, len(self.lines)) if self._TABLE.match(self.lines[i])),
+                    len(self.lines),
+                )
+                rest = ".".join(parts[n:])
+                return (self._find(rest, start, end) if rest else None) or start
         return None
 
     def top(self, key: str | None = None) -> int | None:
@@ -135,7 +161,9 @@ class _SourceMap:
         if key is None:
             return start
         end = self.headers[idx + 1] - 1 if idx + 1 < len(self.headers) else len(self.lines)
-        return self._find(key, start, end) or start
+        # ...and a block ends at any other table, e.g. a [dataset] after the components.
+        other = next((i for i in range(start, end) if self._OTHER.match(self.lines[i])), end)
+        return self._find(key, start, other) or start
 
 
 def _snake(type_name: str) -> str:
@@ -200,6 +228,7 @@ class _Loader:
     # -- passes ------------------------------------------------------------
     def run(self) -> House:
         name, schema, step, horizon = self.top_level()
+        dataset = self.dataset()
         raws = self.components()
         components = self.instantiate(raws)
         nodes, boundaries = self.graph(raws, components)
@@ -227,6 +256,7 @@ class _Loader:
             signals=tuple(signals),
             source=self.source,
             order=tuple(r.name for r in raws if r.name),
+            dataset=dataset,
         )
 
     def top_level(self) -> tuple[str, int, float, float]:
@@ -263,6 +293,14 @@ class _Loader:
                     "horizon", f"horizon ({horizon:g} s) is not a whole number of steps ({step:g} s)"
                 )
         return name, int(schema) if isinstance(schema, int) else 0, step, horizon
+
+    def dataset(self) -> DatasetConfig | None:
+        if "dataset" not in self.doc:
+            return None
+        cfg, problems = parse_dataset_config(self.doc["dataset"])
+        for key, msg in problems:
+            self.issues.append(Issue(msg, self.smap.table(key), None, key))
+        return cfg
 
     def components(self) -> list[_Raw]:
         comps = self.doc.get("component")

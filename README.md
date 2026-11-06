@@ -17,8 +17,11 @@ measurements and forecasts and carries out its plans.
 
 ## Status
 
-Milestone M0 (spec §11): package skeleton, CI, house loader with validation, and
-a solver spike on a synthetic reference MILP. Nothing plans a real house yet.
+Milestones M0 and M1 (spec §11): package skeleton, CI, house loader with
+validation, a solver spike on a synthetic reference MILP, and the
+identification dataset builder (`esther.data`) with an optional reader for a
+homeostat history store (`pip install 'esther[homeostat]'`, `esther.io.homeostat`).
+Nothing plans a real house yet.
 
 ## Development
 
