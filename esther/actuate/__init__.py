@@ -51,17 +51,27 @@ class Command:
         return cls(device, kind, value, start, end, plan.id, plan.valid_until, plan.advisory)
 
 
-def stove_schedule(plan, device: str, level_column: str) -> list[Command]:
+def stove_schedule(plan, device: str, level_column: str, start_column: str | None = None) -> list[Command]:
     """The plan's next burn as absolute times: ``start`` (with its level)
     and ``stop``, and level changes in between. A burn under way at the
-    plan's start has no start command, only its stop."""
+    plan's start has no start command, only its stop — unless the plan
+    starts it in its first step (``start_column``, the plan's start
+    indicator), which is a start now."""
     lv = plan.decisions[level_column].to_numpy()
     idx = plan.index
     end_t = idx[-1] + pd.Timedelta(seconds=float(plan.dt[-1]))
     out = []
     k = 0
     n = len(lv)
-    if lv[0] <= 0:
+    starts_now = (
+        start_column is not None
+        and start_column in plan.decisions
+        and lv[0] > 0
+        and float(plan.decisions[start_column].iloc[0]) > 0.5
+    )
+    if starts_now:
+        out.append(Command.of(plan, device, "start", int(lv[0]), idx[0], idx[0]))
+    elif lv[0] <= 0:
         while k < n and lv[k] <= 0:
             k += 1
         if k == n:

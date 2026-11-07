@@ -650,4 +650,4 @@ class Stove(Component):
         from ..actuate import stove_schedule
 
         col = f"{self.name}.level"
-        return stove_schedule(plan, self.name, col) if col in plan.decisions else []
+        return stove_schedule(plan, self.name, col, f"{self.name}.start") if col in plan.decisions else []

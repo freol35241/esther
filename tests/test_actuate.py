@@ -39,6 +39,14 @@ def test_stove_schedule_is_absolute_start_and_stop():
     last = stove_schedule(FakePlan([0, 1, 1]), "stove", "stove.level")[-1]
     assert last.kind == "stop" and last.start == NOW + pd.Timedelta("45min")
     assert stove_schedule(FakePlan([0, 0, 0]), "stove", "stove.level") == []
+    # a burn the plan starts in its first step is a start now, not a burn under way
+    p = FakePlan([2, 2, 0])
+    p.decisions["stove.start"] = [1.0, 0.0, 0.0]
+    c = stove_schedule(p, "stove", "stove.level", "stove.start")
+    assert [(x.kind, x.value, x.start) for x in c] == [
+        ("start", 2, NOW),
+        ("stop", 0, NOW + pd.Timedelta("30min")),
+    ]
 
 
 def test_generic_wrappers_translate():
