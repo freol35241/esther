@@ -108,10 +108,18 @@ class Ambient(Component):
 
 
 class Coupling(Component):
-    """``Q = UA (T_a − T_b)`` between two nodes, or a node and a boundary."""
+    """``Q = UA (T_a − T_b)`` between two nodes, or a node and a boundary.
 
+    With ``flow_signal`` (a share of each step in [0, 1]) the conductance is
+    scaled by it: a path that exists only while something circulates — a
+    charge pump stirring two parts of a tank."""
+
+    fields = (String("flow_signal", required=False, doc="share of each step the path is open, 0..1"),)
     ports = (Port("between", kind="thermal", count=2),)
     params = (Param("UA", CONDUCTANCE, LogNormal(100.0, 3.0), (0.1, 1e5)),)
+
+    def signals(self) -> list[str]:
+        return [self.config["flow_signal"]] if self.config.get("flow_signal") else []
 
     def conductances(self) -> list[tuple[str, str]]:
         a, b = self.refs["between"]
@@ -123,7 +131,7 @@ class Coupling(Component):
 
     def dynamics(self, p: Mapping[str, float], mode: str) -> list:
         a, b = self.refs["between"]
-        return [Conductance(a, b, p["UA"])]
+        return [Conductance(a, b, p["UA"], self.config.get("flow_signal"))]
 
 
 class Ventilation(Component):

@@ -133,6 +133,10 @@ def validate(
         persist = np.repeat(prep.Y[seg, k0][:, None], H, axis=1)
         err = pred - meas
         perr = persist - meas
+        # a missing measurement (at the start or at the lead) scores neither
+        both = np.isfinite(err) & np.isfinite(perr)
+        err = np.where(both, err, np.nan)
+        perr = np.where(both, perr, np.nan)
         room = prep.lengths[seg] - 1 - k0  # steps available after the start
     else:
         err = perr = np.zeros((0, H, ny))
@@ -145,12 +149,15 @@ def validate(
             for h_s, h in zip(horizons, hs, strict=True):
                 full = room >= h
                 block = e[full, :h, o]
+                block = block[np.isfinite(block)]
+                end = e[full, h - 1, o]
+                end = end[np.isfinite(end)]
                 rows.append(
                     {
                         "output": name,
                         "horizon_h": h_s / HOUR,
                         "rmse": float(np.sqrt(np.mean(block**2))) if block.size else np.nan,
-                        "end_rmse": float(np.sqrt(np.mean(e[full, h - 1, o] ** 2))) if full.any() else np.nan,
+                        "end_rmse": float(np.sqrt(np.mean(end**2))) if end.size else np.nan,
                         "bias": float(np.mean(block)) if block.size else np.nan,
                         "n_windows": int(full.sum()),
                     }
@@ -168,8 +175,9 @@ def validate(
         for s, n in enumerate(prep.lengths):
             e = kf.innov[0, s, 1:n, o]
             v = kf.innov_var[0, s, 1:n, o]
-            es.append(e)
-            zs.append(e / np.sqrt(v))
+            ok = np.isfinite(e)  # missing measurements are skipped
+            es.append(e[ok])
+            zs.append(e[ok] / np.sqrt(v[ok]))
         ecat = np.concatenate(es) if es else np.zeros(0)
         zcat = np.concatenate(zs) if zs else np.zeros(0)
         innov_rows.append(

@@ -42,12 +42,16 @@ name = "tank"
 volume_jacket = "60 l"
 volume_dhw = "180 l"
 room = "living"
+jacket_signal = "tank_bottom_temperature"
+dhw_signal = "tank_top_temperature"
+mixing_signal = "charging"              # compressor or heater on-fraction: a stirred tank
 
 [[component]]
 type = "Radiators"
 zone = "living"
-source = "tank.jacket"
+source = "tank.jacket"                  # the radiators' heat is taken from the jacket
 supply_signal = "supply_temperature"
+flow_signal = "circulation_pump"
 
 [[component]]
 type = "HeatPump"
@@ -55,6 +59,8 @@ name = "heat_pump"
 sink = "tank.jacket"
 source = "outdoor"
 Q_rated = "2 kW"
+P_el = "0.6 kW"
+on_signal = "compressor"
 min_on = "1 h"
 min_off = "30 min"
 
@@ -64,6 +70,7 @@ name = "immersion"
 node = "tank.jacket"
 max = "9 kW"
 steps = 3
+on_signal = "heater_share"              # output as a share of max, 0..1
 
 [[component]]
 type = "Stove"
@@ -74,6 +81,7 @@ levels = [ { heat = "1 kW", fuel = "0.25 kg/h" },
            { heat = "7 kW", fuel = "1.55 kg/h" } ]
 efficiency = 0.85
 fuel = "pellets"
+heat_signal = "stove_heat"              # the integration's estimate of the heat output, W
 min_on = "2 h"
 min_off = "1 h"
 prior.t_ign = { median = "20 min", gsd = 1.5 }
@@ -82,6 +90,7 @@ prior.t_ign = { median = "20 min", gsd = 1.5 }
 type = "HotWaterDraw"
 node = "tank.dhw"
 mains_temperature = "8 °C"
+signal = "draw_heat"                    # detected draws, W (esther.identify.draws)
 
 [[component]]
 type = "Tariff"

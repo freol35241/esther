@@ -14,6 +14,14 @@ process noise of intensity ``Qc`` and ``v`` measurement noise of covariance
 ``R``. The core knows nothing about what a term means physically; it only sums
 heat flows into nodes and divides by their capacity.
 
+A **transfer** is the general linear heat path: ``Q = G (T_hot − T_cold)``
+delivered into one node and (optionally) taken from another, where either
+temperature may be a node, a boundary, a measured signal or a fixed value. A
+conductance is the symmetric special case. Transfers write what a symmetric
+conductance cannot: radiators that take from the tank the heat they give to
+the zone, advection in a stratified tank (one-sided), and a heat output that
+falls with its sink's temperature.
+
 A conductance may be **modulated** by a signal ``s`` in [0, 1] — a radiator
 circuit whose pump runs part of the time carries ``s · UA``. Then ``A`` and
 ``E`` depend on the step: ``A_k = A_0 + Σ_j s_{j,k} A_j`` (and likewise
@@ -27,7 +35,7 @@ method for the process-noise covariance.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -55,6 +63,7 @@ __all__ = [
     "Noise",
     "ParamRef",
     "Signal",
+    "Transfer",
     "compose",
     "discretise",
 ]
@@ -134,6 +143,31 @@ class Conductance:
     modulation: str | None = None
 
 
+Temperature = str | Signal | float  # a node or boundary by name, a measured signal, or fixed (K)
+
+
+@dataclass(frozen=True)
+class Transfer:
+    """``Q = G (T_hot − T_cold)`` (W), added to node ``to`` and removed from node
+    ``frm`` (either may be ``None``: heat from or to nowhere in the model).
+
+    ``hot`` and ``cold`` are each a node or boundary (by name), a
+    :class:`Signal` or a fixed temperature in K (a float). ``modulation``
+    scales ``G`` by a signal in [0, 1] per step, as for a conductance.
+    ``frm_optional``: when ``frm`` is not a node of the composed model (the
+    fitting split, §6.4, leaves the source out) the heat is simply not taken
+    from it, instead of the composition failing.
+    """
+
+    G: float
+    hot: Temperature
+    cold: Temperature
+    to: str | None
+    frm: str | None = None
+    modulation: str | None = None
+    frm_optional: bool = False
+
+
 @dataclass(frozen=True)
 class Gain:
     """``Q = gain × input`` into ``node`` (W)."""
@@ -145,11 +179,15 @@ class Gain:
 
 @dataclass(frozen=True)
 class Decision:
-    """A heat-rate decision ``u`` (W) entering ``node`` with factor ``gain``."""
+    """A heat-rate decision ``u`` (W) entering ``node`` with factor ``gain``, and
+    taken from ``frm`` if given (radiators drawing on a tank). ``frm_optional``
+    as for :class:`Transfer`."""
 
     name: str
     node: str
     gain: float = 1.0
+    frm: str | None = None
+    frm_optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -171,7 +209,7 @@ class Measurement:
     bias: float = 0.0
 
 
-Term = Capacity | Conductance | Gain | Decision | Noise | Measurement
+Term = Capacity | Conductance | Transfer | Gain | Decision | Noise | Measurement
 
 
 # -- the model --------------------------------------------------------------
@@ -266,8 +304,20 @@ class LinearModel:
         vals = self.values(theta)
         out = []
         for name, comp in self.components.items():
-            out.extend((name, self._orient(t)) for t in comp.dynamics(vals[name], self.mode))
+            out.extend((name, self._normalise(self._orient(t))) for t in comp.dynamics(vals[name], self.mode))
         return out
+
+    def _normalise(self, t: Term) -> Term:
+        """An optional source that is not a node of this model is dropped."""
+        if (
+            isinstance(t, Transfer | Decision)
+            and t.frm_optional
+            and t.frm is not None
+            and self.states
+            and t.frm not in self.states
+        ):
+            return replace(t, frm=None)
+        return t
 
     def _orient(self, t: Term) -> Term:
         """A conductance written boundary-first is turned round: ``a`` is the node."""
@@ -309,12 +359,30 @@ class LinearModel:
                     A[j, a, b] += t.UA / C[a]
                     A[j, b, b] -= t.UA / C[b]
                     A[j, b, a] += t.UA / C[b]
+            elif isinstance(t, Transfer):
+                j = mi[t.modulation] if t.modulation else 0
+                for node, sign in ((t.to, 1.0), (t.frm, -1.0)):
+                    if node is None:
+                        continue
+                    k = si[node]
+                    for temp, s2 in ((t.hot, 1.0), (t.cold, -1.0)):
+                        coef = sign * s2 * t.G / C[k]
+                        if isinstance(temp, float | int):
+                            E[j, k, ii[Constant()]] += coef * float(temp)
+                        elif isinstance(temp, Signal) or temp in self.boundary_signal:
+                            sig = temp if isinstance(temp, Signal) else Signal(self.boundary_signal[temp])
+                            E[j, k, ii[sig]] += coef
+                        else:
+                            A[j, k, si[temp]] += coef
             elif isinstance(t, Gain):
                 k = si[t.node]
                 E[0, k, ii[t.input]] += t.gain / C[k]
             elif isinstance(t, Decision):
                 k = si[t.node]
                 B[k, di[t.name]] += t.gain / C[k]
+                if t.frm is not None:
+                    f = si[t.frm]
+                    B[f, di[t.name]] -= t.gain / C[f]
             elif isinstance(t, Noise):
                 Qc[si[t.node], si[t.node]] += t.sigma**2 / SECONDS_PER_HOUR
             elif isinstance(t, Measurement):
@@ -469,11 +537,42 @@ def compose(
                 adj[t.b].add(t.a)
             if t.modulation:
                 add(mods, t.modulation)
+        elif isinstance(t, Transfer):
+            frm = t.frm
+            if frm is not None and t.frm_optional and frm not in owner:
+                frm = None
+            ends = [n for n in (t.to, frm) if n is not None]
+            if not ends:
+                raise ModelError(f"{cname!r}: a transfer must heat or cool at least one node")
+            for n in ends:
+                node(cname, n, "node")
+            touches_boundary = False
+            for temp in (t.hot, t.cold):
+                if isinstance(temp, float | int):
+                    add(inputs, Constant())
+                    touches_boundary = True
+                elif isinstance(temp, Signal):
+                    add(inputs, temp)
+                    touches_boundary = True
+                elif temp in boundary_signal:
+                    add(inputs, Signal(boundary_signal[temp]))
+                    touches_boundary = True
+                else:
+                    node(cname, temp, "temperature")
+                    ends.append(temp)
+            for a in ends:
+                adj[a].update(b for b in ends if b != a)
+                if touches_boundary:
+                    adj[a].add("<boundary>")
+            if t.modulation:
+                add(mods, t.modulation)
         elif isinstance(t, Gain):
             node(cname, t.node, "node")
             add(inputs, t.input)
         elif isinstance(t, Decision):
             node(cname, t.node, "node")
+            if t.frm is not None and not (t.frm_optional and t.frm not in owner):
+                node(cname, t.frm, "node")
             if t.name in decisions:
                 raise ModelError(f"{cname!r}: decision {t.name!r} defined twice")
             decisions.append(t.name)

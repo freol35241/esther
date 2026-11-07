@@ -4,8 +4,11 @@ A :class:`~esther.data.Dataset` marks the steps where its *required* signals
 are valid. A model may read more (a solar proxy, a pump on-fraction), so
 :meth:`IdData.from_dataset` re-segments on exactly the model's signals: a step
 where any of them is missing ends the segment (§6.1: nothing is interpolated
-across a gap). Every frame in an :class:`IdData` is finite in those columns
-and on a regular grid.
+across a gap). Every frame in an :class:`IdData` is on a regular grid and
+finite in those columns — except the ``optional`` ones: **measurements** that
+may be missing at a step without ending the segment (the filter skips their
+update there; nothing is filled in). Inputs can never be optional: the model
+cannot be propagated without them.
 """
 
 from __future__ import annotations
@@ -35,18 +38,28 @@ class IdData:
         signals: Iterable[str],
         min_steps: int = 2,
         usable: pd.Series | None = None,
+        optional: Iterable[str] = (),
     ) -> IdData:
         """Split ``frame`` (indexed by step start) into runs where every one of
         ``signals`` is finite, the index advances by exactly ``step`` and
-        ``usable`` (if given) is true. Runs shorter than ``min_steps`` are dropped."""
-        cols = list(dict.fromkeys(signals))
+        ``usable`` (if given) is true. Runs shorter than ``min_steps`` are dropped.
+
+        ``optional`` columns (measurements only) are carried along and may be
+        missing (NaN) inside a run; a run where one of them is never present
+        is still kept."""
+        opt = [c for c in dict.fromkeys(optional)]
+        cols = [c for c in dict.fromkeys(signals) if c not in opt]
         missing = [c for c in cols if c not in frame.columns]
         if missing:
             raise KeyError(f"no column for signal(s): {', '.join(missing)}")
         if not isinstance(frame.index, pd.DatetimeIndex) or frame.index.tz is None:
             raise ValueError("the frame needs a tz-aware DatetimeIndex")
+        missing_opt = [c for c in opt if c not in frame.columns]
+        if missing_opt:
+            raise KeyError(f"no column for signal(s): {', '.join(missing_opt)}")
         sub = frame[cols].astype(float)
         ok = np.isfinite(sub.to_numpy()).all(axis=1) if cols else np.ones(len(sub), dtype=bool)
+        sub = frame[cols + opt].astype(float)
         if usable is not None:
             ok &= usable.reindex(frame.index, fill_value=False).to_numpy(dtype=bool)
         t = frame.index.as_unit("ns").asi8
@@ -65,14 +78,23 @@ class IdData:
         return cls(step=float(step), frames=frames)
 
     @classmethod
-    def from_dataset(cls, ds, signals: Iterable[str], extra: pd.DataFrame | None = None) -> IdData:
+    def from_dataset(
+        cls,
+        ds,
+        signals: Iterable[str],
+        extra: pd.DataFrame | None = None,
+        optional: Iterable[str] = (),
+    ) -> IdData:
         """Segments of a :class:`~esther.data.Dataset` usable for ``signals``.
 
         ``extra`` adds derived columns (same index) before segmenting — inputs
-        the integration computes from the dataset's signals."""
+        the integration computes from the dataset's signals. ``optional``
+        measurements may be missing inside a segment (see :meth:`from_frame`)."""
         values = ds.values if extra is None else ds.values.join(extra, how="left")
         min_steps = max(2, int(np.ceil(ds.config.min_segment / ds.config.step - 1e-9)))
-        return cls.from_frame(values, ds.config.step, signals, min_steps=min_steps, usable=ds.usable)
+        return cls.from_frame(
+            values, ds.config.step, signals, min_steps=min_steps, usable=ds.usable, optional=optional
+        )
 
     # -- properties --------------------------------------------------------
     @property

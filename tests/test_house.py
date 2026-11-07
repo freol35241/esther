@@ -117,7 +117,19 @@ def test_multi_source_example_contents():
     assert h["comfort_band"].config["setpoint"] == pytest.approx(294.15)
     assert h["immersion"].config["steps"] == 3
     assert h["stove"].param["t_ign"].prior.median == 1200.0
-    assert set(h.signals) == {"outdoor_temperature", "supply_temperature", "spot_price"}
+    assert set(h.signals) == {
+        "outdoor_temperature",
+        "supply_temperature",
+        "circulation_pump",
+        "tank_bottom_temperature",
+        "tank_top_temperature",
+        "charging",
+        "compressor",
+        "heater_share",
+        "stove_heat",
+        "draw_heat",
+        "spot_price",
+    }
 
 
 def test_pinned_parameter():

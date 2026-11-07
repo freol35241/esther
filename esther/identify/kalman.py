@@ -15,11 +15,15 @@ combination in the data.
 
 Conventions: the state ``x_k`` is at the start of step ``k``; inputs ``d_k``
 are the step's means, held over it (zero-order hold); the measurement ``y_k``
-is the step's mean, taken as an observation of ``x_k``.
+is the step's mean, taken as an observation of ``x_k``. A measurement that is
+missing (NaN; :class:`~esther.identify.data.IdData`'s ``optional`` outputs)
+contributes no update and no likelihood term at its step; its innovation is
+stored as NaN.
 """
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -31,6 +35,7 @@ from .data import IdData
 __all__ = ["FilterOptions", "KalmanResult", "Prepared", "kalman", "open_loop", "prepare", "system"]
 
 LOG_2PI = float(np.log(2.0 * np.pi))
+TWO_PI = 2.0 * np.pi
 
 
 @dataclass(frozen=True)
@@ -86,8 +91,10 @@ def prepare(model: LinearModel, data: IdData, options: FilterOptions | None = No
         if nm:
             mods[s, :n] = f[list(model.modulations)].to_numpy(dtype=float)
         mask[s, :n] = True
-    if not (np.isfinite(D).all() and np.isfinite(Y).all() and np.isfinite(mods).all()):
-        raise ValueError("non-finite values in the data; build it with IdData.from_dataset/from_frame")
+    if not (np.isfinite(D).all() and np.isfinite(mods).all()):
+        raise ValueError("non-finite inputs in the data; build it with IdData.from_dataset/from_frame")
+    if np.isinf(Y).any():
+        raise ValueError("infinite measurements in the data")
     if nm:
         q = np.clip(np.round(mods * opts.levels), 0, opts.levels) / opts.levels
         # The zero-padded tail must not create a combination of its own.
@@ -151,14 +158,28 @@ class KalmanResult:
 
 def _x0(prep: Prepared, c: np.ndarray, n: int, opts: FilterOptions) -> tuple[np.ndarray, np.ndarray]:
     m = c.shape[0]
-    y0 = prep.Y[:, 0, :][None] - c[:, None, :]  # (m, S, ny)
+    # each output's first present value in its segment (missing measurements are NaN)
+    Yf = prep.Y.copy()
+    for s in range(Yf.shape[0]):
+        for o in range(Yf.shape[2]):
+            col = Yf[s, : prep.lengths[s], o]
+            ok = np.flatnonzero(np.isfinite(col))
+            Yf[s, 0, o] = col[ok[0]] if len(ok) else np.nan
+    y0 = Yf[:, 0, :][None] - c[:, None, :]  # (m, S, ny)
     S = y0.shape[1]
-    x0 = np.repeat(y0.mean(axis=2, keepdims=True), n, axis=2)
+    with np.errstate(invalid="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        allmean = np.nanmean(y0, axis=2, keepdims=True)
+    allmean = np.where(np.isfinite(allmean), allmean, 293.15)
+    x0 = np.repeat(allmean, n, axis=2)
     sd = np.full(n, opts.x0_sd_unmeasured)
     for i in range(n):
         sel = prep.obs_node == i
         if sel.any():
-            x0[:, :, i] = y0[:, :, sel].mean(axis=2)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                xi = np.nanmean(y0[:, :, sel], axis=2)
+            x0[:, :, i] = np.where(np.isfinite(xi), xi, x0[:, :, i])
             sd[i] = opts.x0_sd_measured
     P0 = np.broadcast_to(np.diag(sd**2), (m, S, n, n)).copy()
     return x0, P0
@@ -194,93 +215,127 @@ def kalman(
     keep the lanes on the last axis — ``x`` is (n, B), ``P`` (n, n, B) — so
     each step is a few vectorised operations over B lanes rather than B tiny
     matrix products (an order of magnitude faster for n ≤ 3).
+
+    Lanes are ordered by segment length, longest first, so the lanes still
+    running at step ``k`` are a prefix. Per-step data are stored **flat**,
+    step after step, only for the live lanes: no array is padded to the
+    longest segment, and a step costs what its live segments cost.
     """
     opts = options or FilterOptions()
     sysm = system(model, prep, thetas)
     m, K, n, _ = sysm.Ad.shape
     S, L, ny = prep.Y.shape
-    B = m * S
-    mi = np.repeat(np.arange(m), S)  # lane -> parameter vector
-    si = np.tile(np.arange(S), m)  # lane -> segment
+    order = np.argsort(-prep.lengths, kind="stable")
+    si = np.repeat(order, m)  # lane -> segment, longest segments first
+    mi = np.tile(np.arange(m), S)  # lane -> parameter vector
+    live = np.array([int((prep.lengths > k).sum()) * m for k in range(L)])
+    off = np.r_[0, np.cumsum(live)]  # flat offset of step k
+    N = int(off[-1])
+    k_of = np.repeat(np.arange(L), live)  # flat position -> step
+    l_of = np.arange(N) - off[k_of]  # flat position -> lane
+    s_of, m_of = si[l_of], mi[l_of]
     on = prep.obs_node
+
     x0, P0 = _x0(prep, sysm.c, n, opts)  # (m, S, n), (m, S, n, n)
-    x = np.ascontiguousarray(x0.reshape(B, n).T)
-    P = np.ascontiguousarray(np.moveaxis(P0.reshape(B, n, n), 0, -1))
-    # discrete matrices per (vector, level), lanes last
-    # (n, n, m·K), C-contiguous; gathered with np.take, whose result is
-    # contiguous too (fancy indexing on the last axis is not, and einsum on
-    # the strided result is three times slower).
+    x = np.ascontiguousarray(x0[mi, si].T)
+    P = np.ascontiguousarray(np.moveaxis(P0[mi, si], 0, -1))
+    # discrete matrices per (vector, level), lanes last, gathered with np.take
     Ad_t = np.ascontiguousarray(np.moveaxis(sysm.Ad.reshape(m * K, n, n), 0, -1))
     Qd_t = np.ascontiguousarray(np.moveaxis(sysm.Qd.reshape(m * K, n, n), 0, -1))
-    drive = _input_drive(sysm, prep)  # (L, n, B)
-    Y = np.ascontiguousarray(np.take(np.moveaxis(prep.Y, 0, -1), si, axis=-1))  # (L, ny, B)
-    c = np.ascontiguousarray(sysm.c[mi].T)  # (ny, B)
-    R = np.ascontiguousarray(np.moveaxis(sysm.R[mi], 0, -1))  # (ny, ny, B)
-    E = np.zeros((L, ny, B))
-    V = np.zeros((L, ny, B))
-    LD = np.zeros((L, B)) if ny > 1 else None
-    QF = np.zeros((L, B)) if ny > 1 else None
+    combo = prep.combo[s_of, k_of]
+    lane_idx = m_of * K + combo  # (N,)
+    # input drive Gd(level) d per flat position, (n, N)
+    drive = np.zeros((n, N))
+    Dflat = prep.D[s_of, k_of]  # (N, n_in)
+    chunk = 20000
+    for a0 in range(0, N, chunk):
+        sl = slice(a0, min(N, a0 + chunk))
+        G = sysm.Gd[m_of[sl], combo[sl]]  # (c, n, n_in)
+        drive[:, sl] = np.einsum("cij,cj->ic", G, Dflat[sl], optimize=True)
+    del Dflat
+    Y = np.ascontiguousarray(prep.Y[s_of, k_of].T)  # (ny, N)
+    c = np.ascontiguousarray(sysm.c[m_of].T)  # (ny, N)
+    Rd = np.ascontiguousarray(np.einsum("mii->mi", sysm.R)[m_of].T) if ny else np.zeros((0, N))  # (ny, N)
+    has_nan = bool(np.isnan(Y).any())
+    E = np.zeros((ny, N)) if store else None
+    V = np.ones((ny, N)) if store else None
+    TERM = np.zeros(N)
+    RT = np.zeros(N)
+    # Sensors on the same node are fused exactly: the update with their
+    # precision-weighted mean (variance 1 / Σ w_i) gives the same posterior as
+    # taking them one by one, and the likelihood factorises into that update's
+    # term and a within-group term that does not depend on the state —
+    # computed here for every step at once.
+    groups = []
+    for j in np.unique(on) if ny else []:
+        idx = np.flatnonzero(on == j)
+        Yg = Y[idx] - c[idx]  # (k, N)
+        Wg = np.where(np.isfinite(Yg), 1.0 / Rd[idx], 0.0)
+        Wsum = Wg.sum(axis=0)
+        present = Wsum > 0
+        Yz = np.nan_to_num(Yg)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            ybar = np.where(present, (Wg * Yz).sum(axis=0) / Wsum, np.nan)
+            rbar = np.where(present, 1.0 / Wsum, 1.0)
+            dev = np.where(Wg > 0, Yz - ybar, 0.0)
+            logs = np.where(Wg > 0, np.log(TWO_PI / np.where(Wg > 0, Wg, 1.0)), 0.0)
+        if len(idx) > 1:
+            within = (Wg * dev**2).sum(axis=0) + logs.sum(axis=0) - np.log(TWO_PI * rbar)
+            RT += np.where(present, within, 0.0)
+        groups.append((int(j), ybar, rbar))
     if store:
-        xf = np.zeros((L, n, B))
-        Pf = np.zeros((L, n, n, B))
-    if K == 1:
-        Ad = np.take(Ad_t, mi, axis=2)
-        Qd = np.take(Qd_t, mi, axis=2)
-    else:
-        lane_idx = np.ascontiguousarray((mi * K)[None, :] + prep.combo[si].T)  # (L, B)
-    if ny == 1:
-        i0 = int(on[0])
-        R1 = R[0, 0]
-        c1 = c[0]
+        xf = np.zeros((n, N))
+        Pf = np.zeros((n, n, N))
     for k in range(L):
-        if ny == 1:
-            e = Y[k, 0] - x[i0] - c1  # (B,)
-            PHt = P[:, i0]  # (n, B)
-            s = PHt[i0] + R1
-            Kg = PHt / s
-            x = x + Kg * e
-            P = P - Kg[:, None] * PHt[None]
-            E[k, 0] = e
-            V[k, 0] = s
-        elif ny:
-            e = Y[k] - x[on] - c  # (ny, B)
-            PHt = P[:, on]  # (n, ny, B)
-            Sk = np.moveaxis(PHt[on] + R, -1, 0)  # (B, ny, ny)
-            Sinv = np.moveaxis(np.linalg.inv(Sk), 0, -1)  # (ny, ny, B)
-            Kg = np.einsum("ijb,jkb->ikb", PHt, Sinv)
-            x = x + np.einsum("ijb,jb->ib", Kg, e)
-            P = P - np.einsum("ijb,kjb->ikb", Kg, PHt)
-            LD[k] = np.linalg.slogdet(Sk)[1]
-            QF[k] = np.einsum("ib,ijb,jb->b", e, Sinv, e)
-            E[k] = e
-            V[k] = np.einsum("iib->ib", PHt[on] + R)
+        b = live[k]
+        if b == 0:
+            break
+        if b < x.shape[1]:  # segments ended: drop their lanes (they never come back)
+            x, P = x[:, :b].copy(), P[:, :, :b].copy()
+        sl = slice(off[k], off[k] + b)
+        if ny:
+            if store:
+                E[:, sl] = Y[:, sl] - x[on] - c[:, sl]
+                V[:, sl] = P[on, on] + Rd[:, sl]
+            tk = np.zeros(b)
+            for j, ybar, rbar in groups:
+                e = ybar[sl] - x[j]
+                vj = P[j, j] + rbar[sl]
+                Kg = P[:, j] / vj  # (n, b)
+                if has_nan:
+                    ok = np.isfinite(e)
+                    if not ok.any():
+                        continue
+                    e = np.where(ok, e, 0.0)
+                    Kg = np.where(ok, Kg, 0.0)
+                    tk += np.where(ok, np.log(TWO_PI * vj) + e**2 / vj, 0.0)
+                else:
+                    tk += np.log(TWO_PI * vj) + e**2 / vj
+                x = x + Kg * e
+                P = P - Kg[:, None] * P[j][None]
+            TERM[sl] = tk
         if k % 16 == 0:
             P = 0.5 * (P + P.transpose(1, 0, 2))
         if store:
-            xf[k] = x
-            Pf[k] = P
-        if k == L - 1:
+            xf[:, sl] = x
+            Pf[:, :, sl] = P
+        if k == L - 1 or live[k + 1] == 0:
             break
-        if K > 1:
-            Ad = np.take(Ad_t, lane_idx[k], axis=2)
-            Qd = np.take(Qd_t, lane_idx[k], axis=2)
-        x = np.einsum("ijb,jb->ib", Ad, x) + drive[k]
+        b1 = live[k + 1]
+        if b1 < b:
+            x, P = x[:, :b1].copy(), P[:, :, :b1].copy()
+        Ad = np.take(Ad_t, lane_idx[sl][:b1], axis=2)
+        Qd = np.take(Qd_t, lane_idx[sl][:b1], axis=2)
+        x = np.einsum("ijb,jb->ib", Ad, x) + drive[:, sl][:, :b1]
         P = np.einsum("ikb,lkb->ilb", np.einsum("ijb,jkb->ikb", Ad, P), Ad) + Qd
-    mask = prep.mask.T[:, si]  # (L, B)
-    if ny == 1:
-        v = V[:, 0]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            term = np.log(v) + E[:, 0] ** 2 / v + LOG_2PI
-    elif ny > 1:
-        term = LD + QF + ny * LOG_2PI
-    else:
-        term = np.zeros((L, B))
-    nll = 0.5 * np.where(mask, term, 0.0).reshape(L, m, S).sum(axis=(0, 2))
+    nll = 0.5 * np.bincount(m_of, weights=TERM + RT, minlength=m)
     res = KalmanResult(nll=nll)
     if store:
 
-        def lanes(a: np.ndarray) -> np.ndarray:  # (L, ..., B) -> (m, S, L, ...)
-            return np.moveaxis(a, -1, 0).reshape(m, S, *a.shape[:-1])
+        def lanes(a: np.ndarray) -> np.ndarray:  # (..., N) -> (m, S, L, ...)
+            out = np.zeros((m, S, L, *a.shape[:-1]))
+            out[m_of, s_of, k_of] = np.moveaxis(a, -1, 0)
+            return out
 
         res.innov = lanes(E)
         res.innov_var = lanes(V)

@@ -1,6 +1,6 @@
 # esther v1 — specification
 
-Status: **agreed; being built** (M0 and M1 merged, M2 in review; §11). The v0 line
+Status: **agreed; being built** (M0–M2 merged, M3 in review; §11). The v0 line
 (single-state model, hand-set parameters, SLSQP, MQTT service) is preserved at
 tag `v0-legacy`; the unmerged dev line ends at `v0.4.0_dev9`. v1 is a rewrite in
 the same repository, not an increment.
@@ -243,6 +243,23 @@ As built in M2 (`esther.core.model`):
 - A measurement `y_k` is the step's mean and is taken as observing the state
   at the step's start; inputs are the step's means, held over it.
 
+As built in M3:
+
+- A **transfer** term is the general linear heat path:
+  `Q = G (T_hot − T_cold)` delivered into one node and taken from another
+  (either may be absent), with each temperature a node, a boundary, a measured
+  signal or a fixed value, optionally modulated. A conductance is its
+  symmetric special case. It writes what a conductance cannot: radiators that
+  take from the tank the heat they give the zone, one-sided advection in a
+  stratified tank, a heat output that falls with its sink temperature. A
+  decision may likewise be taken from a source node. A source that is not in
+  the composed model (the fitting split, §6.4) is dropped when the term marks
+  it optional.
+- The filter takes the measurements one at a time (R is diagonal; same
+  posterior, same likelihood), and runs only the segments still going at
+  each step. A **missing measurement** is skipped at its step and does not
+  end the segment (§6.1); missing inputs still do.
+
 ### 4.4 Composition
 
 Components attach by **port name**. A node is created by the component that
@@ -327,6 +344,17 @@ dimensionless.
 - **`StratifiedTank`** — `n` layers (n = 1–3) with inter-layer conductance and
   draw-driven advection; for plain DHW cylinders and buffer tanks.
 
+*As built (M3):* a tank's node capacities are `f_C · ρ c_p V` from its
+volumes, with `f_C` (the share of the nominal water capacity that behaves as
+the modelled nodes) a parameter with a tight prior: pin it and the volume is a
+scale anchor (§6.2). `JacketTank` may split its inner vessel into a lower node
+(`dhw`, where draws show) and a `top` node; a tank at rest stratifies and a
+charging one is stirred, so a `mixing_signal` (the share of each step the tank
+is stirred, e.g. the charge on-fraction) adds `UA_mix` to the jacket–DHW
+coupling while on — linear in the states, an approximation of buoyancy.
+`StratifiedTank`'s advection is driven by `draw_signal`, the draw flow as a
+share of `draw_flow_max`. `Radiators` with a `source` take their heat from it.
+
 #### 4.5.4 Sources
 
 - **`HeatPump`** — generic. Decision: heat rate `Q_hp ∈ [0, Q_max(T_src, T_sink)]`,
@@ -349,12 +377,24 @@ dimensionless.
   × efficiency). **Manual firing** (wood) is not planned: it is detected from
   measurements (§7.5) and enters as an exogenous heat input.
 
+*As built (M3), identification forms:* each source enters as a measured heat
+input — `HeatPump` as `δ · Q` with `δ` its `on_signal` and `Q` fitted (prior
+centred on `Q_rated`), optionally `δ (Q + dQ_dT (T_ref − T_sink))` with
+`sink_reference`; its COP is reported as `Q / P_el` when the electrical input
+is measured. `ElectricHeater` as `share · Q`, `Q` with a tight prior on `max`
+(its heat is its electrical power: the natural scale anchor). `Stove` as
+`gain · heat_signal`, `gain` being the **delivered fraction** of the
+integration's heat estimate, split to an optional mass node by `f_rad`. In
+planning each is a heat-rate decision; levels, run times and costs arrive in
+M4.
+
 #### 4.5.5 Loads
 
 - **`HotWaterDraw`** — energy drawn from a DHW node:
   `Q_draw = ṁ c_p (T_dhw − T_mains)`. In planning, a forecast draw energy per
   step (§7.4). In identification, draws are **detected** from the tank's
-  temperature signature (§6.3) — no flow meter is assumed.
+  temperature signature (§6.3) — no flow meter is assumed. *As built:* its
+  `signal` is the draw as a heat rate (W), removed with a fixed gain of −1.
 
 #### 4.5.6 Controller-wrapped devices
 
@@ -375,6 +415,15 @@ into the input that makes the device do it.
   `mode ∈ {block, auto, boost}` is translated to a fake tank-sensor value.
 
 The reference plant in Appendix A is two such wrappers around one compressor.
+
+*As built (M3):* wrappers carry no thermal dynamics. They give the
+translations (inverse curve to a fake outdoor value, clamped; mode to a fake
+tank value) and the device's own logic (curve, thermostat hysteresis, and for
+`ivt490.Plant` the one-compressor rule: on while the tank sensor *as seen*
+has fallen to its start limit and not reached its stop limit, or the jacket
+has fallen `heating_differential` below the curve target and not reached it),
+so that the logic can be replayed against a record and scored before a
+planner relies on it. Decisions and constraints arrive in M4.
 
 #### 4.5.7 Economics and comfort
 
@@ -506,6 +555,9 @@ As built in M1 (`esther.data`):
   the previous sample holds over them within the tolerance; a run of masked
   samples longer than the tolerance becomes a gap. Holding within the tolerance
   is the only bridging there is; past it, the step is missing.
+- *M3:* a measurement may be declared optional for a model's data
+  (`IdData`'s `optional`): missing inside a segment, it is skipped by the
+  filter instead of ending the segment. Inputs cannot be optional.
 - The address of each signal in a history store is not in the house file: the
   integration passes its address map to `read_signals` (§5, §9.1).
 
@@ -535,7 +587,14 @@ As built in M1 (`esther.data`):
   temperatures alone identify time constants and ratios, never watts: the
   absolute scale comes from the one heat input whose size is known (a rated
   heater, a stove's nominal output, a heat meter) or else from the priors, and
-  the report says which.
+  the report says which. *M3:* a measured draw is such an input too (its heat
+  enters with gain −1), and so is a tank of known volume; a heater of known
+  power and a known volume, fitted together with `f_C` free, test each other.
+- *As built (M3):* each start runs in two stages — first inside a box of ±3
+  prior sd around the start, then within the full bounds. From a poor start
+  the first line search can otherwise run every noise parameter to its upper
+  bound, where noise "explains" everything and the run stops. A fit may be
+  given its first start (a previous fit, in an outer loop).
 
 ### 6.3 Draw detection (hot water without a flow meter)
 
@@ -552,6 +611,26 @@ Validated against a labelled sample: the house owner records a handful of
 known draws (a shower, a bath) with times, and the detector MUST find them with
 the right order of magnitude of energy. Without labels the detector's output is
 reported, not trusted.
+
+*As built (M3)* (`esther.identify.draws`):
+
+- The detector is **sequential**: at a step whose standardised innovation is
+  below `−k`, the draw over the previous step that makes the prediction meet
+  the measurement is entered as an input at once, and the filter goes on.
+  Otherwise the filter catches a large drop up over many steps and one
+  morning's draws merge into one event.
+- `σ` is a **robust** scale — the median absolute deviation of the sensor's
+  innovations × 1.4826 — not the filter's own innovation sd: a tank fitted
+  without its draws has absorbed them into its process noise, which blinds a
+  detector that trusts it. Default `k = 4`; consecutive flagged steps form one
+  event.
+- The outer loop stops when the detected events no longer change.
+- Validation against labels requires, by default, at least 3 labels, every one
+  found within 20 min, and energies within a factor √10. With fewer labels it
+  refuses. Without labels, an **injection test** is the proxy: the model's own
+  response to synthetic draws of known energy is added to the recorded data
+  (exact, the model being linear), and the detector must find them. That tests
+  the detector on the house's real noise, not the model.
 
 ### 6.4 The fitting split
 
@@ -873,6 +952,8 @@ confidence interval; the winter is long enough for an answer.
    source temperature can be taken as the zone temperature (it is the extract
    air) — probably, M1 checks.
 5. **Draw labels.** How many labelled draws are needed to trust the detector.
+   *M3:* the validation refuses below 3 (a setting); the number that makes the
+   detector trusted is still open, and no house has labels yet.
 6. **Evaluation length.** How many alternating blocks give a useful interval.
 
 ---

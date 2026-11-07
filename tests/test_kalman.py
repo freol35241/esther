@@ -9,11 +9,12 @@ import pytest
 import synthetic as syn
 
 from esther.core.model import discretise
-from esther.identify import FilterOptions, IdData, kalman, open_loop, prepare, simulate
+from esther.identify import FilterOptions, IdData, kalman, open_loop, prepare, simulate, validate
 
 
 def reference_nll(model, data, theta):
-    """One segment, one step at a time, dense matrices, no tricks."""
+    """One segment, one step at a time, dense matrices, no tricks. A missing
+    measurement (NaN) is left out of that step's update."""
     opts = FilterOptions()
     M = model.matrices(theta)
     nll = 0.0
@@ -25,7 +26,8 @@ def reference_nll(model, data, theta):
         S = np.round(S * opts.levels) / opts.levels
         H, c, R = M.H, M.c, M.R
         n = model.n_states
-        y0 = Y[0] - c
+        first = np.array([col[np.isfinite(col)][0] for col in Y.T])
+        y0 = first - c
         x = np.full(n, y0.mean())
         sd = np.full(n, opts.x0_sd_unmeasured)
         for i in range(n):
@@ -36,12 +38,15 @@ def reference_nll(model, data, theta):
         P = np.diag(sd**2)
         xs = []
         for k in range(len(f)):
-            e = Y[k] - H @ x - c
-            Sk = H @ P @ H.T + R
-            Kg = P @ H.T @ np.linalg.inv(Sk)
-            x = x + Kg @ e
-            P = P - Kg @ H @ P
-            nll += 0.5 * (np.linalg.slogdet(2 * np.pi * Sk)[1] + e @ np.linalg.solve(Sk, e))
+            ok = np.isfinite(Y[k])
+            Hk, Rk = H[ok], R[np.ix_(ok, ok)]
+            e = Y[k][ok] - Hk @ x - c[ok]
+            if ok.any():
+                Sk = Hk @ P @ Hk.T + Rk
+                Kg = P @ Hk.T @ np.linalg.inv(Sk)
+                x = x + Kg @ e
+                P = P - Kg @ Hk @ P
+                nll += 0.5 * (np.linalg.slogdet(2 * np.pi * Sk)[1] + e @ np.linalg.solve(Sk, e))
             xs.append(x.copy())
             A, E = M.at(S[k])
             d = discretise(A, E, M.Qc, data.step)
@@ -96,6 +101,34 @@ def test_filter_matches_reference_two_sensors():
     th = np.array([truth[n] for n in m.param_names])
     ref, _ = reference_nll(m, data, th)
     assert kalman(m, prepare(m, data), th[None]).nll[0] == pytest.approx(ref, rel=1e-9)
+
+
+def test_missing_measurements_are_skipped_not_segment_breaks():
+    m = syn.compose_house(syn.ENVELOPE, syn.RADIATORS, syn.KNOWN_HEAT, SENSOR)
+    truth = {"zone.C": 4e6, "zone.sigma_w": 0.05, "zone.sigma_v": 0.03, "env.UA": 120.0}
+    truth.update({"radiators.UA_rad": 200.0, "second.bias": 0.5, "second.sigma_v": 0.08})
+    _, sim = syn.dataset(m, truth, days=2, step=900.0, gaps=0)
+    rng = np.random.default_rng(1)
+    holes = rng.random(len(sim)) < 0.2
+    sim.loc[holes, "t_in2"] = np.nan
+    sim.iloc[0, sim.columns.get_loc("t_in2")] = np.nan  # missing at the very start too
+    sim.loc[rng.random(len(sim)) < 0.05, "t_in"] = np.nan  # and now and then both
+    strict = IdData.from_frame(sim, 900.0, m.required_signals())
+    assert len(strict.frames) > 10  # every hole ends a segment
+    data = IdData.from_frame(sim, 900.0, m.required_signals(), optional=["t_in", "t_in2"])
+    assert len(data.frames) == 1 and data.n_steps == len(sim)
+    th = np.array([truth[n] for n in m.param_names])
+    ref, _ = reference_nll(m, data, th)
+    kf = kalman(m, prepare(m, data), th[None], store=True)
+    assert kf.nll[0] == pytest.approx(ref, rel=1e-9)
+    assert np.isnan(kf.innov[0, 0, holes, 1]).all()
+    # inputs cannot be optional: a missing input still ends the segment
+    sim2 = sim.copy()
+    sim2.iloc[50, sim2.columns.get_loc("t_out")] = np.nan
+    assert len(IdData.from_frame(sim2, 900.0, m.required_signals(), optional=["t_in", "t_in2"]).frames) == 2
+    # and validation scores only where both the model and persistence have a measurement
+    v = validate(m, th, data)
+    assert np.isfinite(v.rmse("t_in2", 6 * 3600.0))
 
 
 def test_batch_equals_separate_calls(two_node):
