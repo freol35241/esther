@@ -140,8 +140,9 @@ def leak_check(
     after** ``now`` (``make_forecasters(now)``: every datum later than now
     replaced by something absurd). Information from the future, if any
     forecaster reads it, changes the plan; this raises :class:`LeakError`
-    on the first difference. Each row reports the largest difference in the
-    decisions and the forecasts.
+    on the first difference — in the forecasts, the device events, or (when
+    both solves were deterministic, stopped by a node limit rather than the
+    clock) the plans. Each row reports the largest differences.
     """
     rows = []
     h = planner.house
@@ -157,14 +158,20 @@ def leak_check(
             raise LeakError(
                 f"at {now}: the forecast of {col!r} changes when the future is poisoned ({diff_fc:.3g})"
             )
+        ev = [sorted((e.component, e.kind, e.start, e.end) for e in fc.events) for fc in out]
+        if ev[0] != ev[1]:
+            raise LeakError(f"at {now}: the device events change when the future is poisoned")
         dev = devices(now) if devices else {}
         plans = [planner.plan(now, state(now), fc, devices=dev) for fc in out]
-        d = (
-            plans[0].decisions.select_dtypes("number").to_numpy()
-            - plans[1].decisions.select_dtypes("number").to_numpy()
-        )
-        diff_plan = float(np.nanmax(np.abs(d))) if d.size else 0.0
-        if diff_plan > max(tol, 1e-3):
-            raise LeakError(f"at {now}: the plan changes when the future is poisoned ({diff_plan:.3g})")
-        rows.append({"time": now, "forecast_diff": diff_fc, "plan_diff": diff_plan})
+        # the plans are compared only when both solves were deterministic (a
+        # node limit, not the clock): otherwise a difference says nothing
+        det = all(p.solver["deterministic"] for p in plans)
+        diff_plan = float("nan")
+        if det:
+            a = plans[0].decisions.select_dtypes("number").to_numpy()
+            b = plans[1].decisions.select_dtypes("number").to_numpy()
+            diff_plan = float(np.nanmax(np.abs(a - b))) if a.size else 0.0
+            if diff_plan > max(tol, 1e-3):
+                raise LeakError(f"at {now}: the plan changes when the future is poisoned ({diff_plan:.3g})")
+        rows.append({"time": now, "forecast_diff": diff_fc, "plan_diff": diff_plan, "deterministic": det})
     return pd.DataFrame(rows)
