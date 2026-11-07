@@ -18,7 +18,7 @@ From M2, a component also contributes its **dynamics and measurements**
 (:mod:`esther.core.model`) as a function of the component's parameter values,
 and :meth:`Component.active_params` says which of its parameters those terms
 use. A component that does not override ``dynamics`` has none in this
-version (the tank and source types until M3) and is skipped by
+version (economics and comfort, until the planner) and is skipped by
 :func:`esther.core.model.compose`.
 
 The remaining contributions — decisions with their constraints and cost, and

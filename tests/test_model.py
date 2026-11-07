@@ -147,11 +147,16 @@ def test_plan_mode_radiators_are_a_decision():
     assert m.matrices(m.prior_centre()).B[0, 0] == pytest.approx(1 / 5e6)
 
 
-def test_m3_components_are_skipped():
+def test_plan_mode_composes_the_tank_and_sources():
     h = load_house(EXAMPLES / "multi_source.toml")
     m = compose(h, mode="plan")
-    assert set(m.skipped) >= {"tank", "stove"}
-    assert "tank.jacket" not in m.states
+    assert set(m.skipped) == {"tariff", "comfort_band", "dhw_service"}
+    assert {"tank.jacket", "tank.dhw"} <= set(m.states)
+    assert set(m.decisions) == {"radiators.Q", "heat_pump.Q", "immersion.Q", "stove.Q"}
+    B = m.matrices(m.prior_centre()).B
+    j, z, r = m.states.index("tank.jacket"), m.states.index("living"), m.decisions.index("radiators.Q")
+    # the radiators' heat enters the zone and leaves the jacket they mix from
+    assert B[z, r] > 0 > B[j, r]
 
 
 # -- refusals --------------------------------------------------------------
@@ -178,7 +183,7 @@ def test_refuses_no_measurement():
 def test_refuses_include_of_unmodelled_or_unknown():
     h = load_house(EXAMPLES / "multi_source.toml")
     with pytest.raises(ModelError, match="without dynamics"):
-        compose(h, include=["tank"], mode="plan")
+        compose(h, include=["tariff"], mode="plan")
     with pytest.raises(ModelError, match="no component named"):
         compose(h, include=["nope"])
 

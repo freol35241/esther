@@ -10,6 +10,12 @@ same scale, and finite-difference steps can be the same for all.
 - L-BFGS-B with bounds, gradient by forward differences evaluated as one
   batch; multi-start, the first start at the prior centre and the others
   drawn from the prior (§6.2: ≥ 8 starts).
+- **Each start runs in two stages**: first inside a trust box of
+  ``±trust`` prior sd around the start, then from there within the full
+  bounds. Without the box, the first line search from a poor start can run
+  every noise parameter to its upper bound — a corner where large noise
+  "explains" the data, the other parameters lose their gradient, and the
+  run stops far from the optimum (the tank recovery tests met this).
 - Uncertainty: the inverse of the central-difference Hessian at the optimum,
   in ``u`` (hence ``t``) space; 95 % intervals are ``t ± 1.96 sd`` mapped back.
 - Identifiability: a parameter whose posterior sd in ``u`` is not smaller
@@ -58,6 +64,7 @@ class FitOptions:
     identify_factor: float = 2.0
     correlation_flag: float = 0.95
     bound_tol: float = 1e-3  # in u: closer than this to a bound counts as on it
+    trust: float | None = 3.0  # first-stage box around each start, in prior sd (None: no first stage)
     workers: int = 1  # processes for the starts (set OPENBLAS_NUM_THREADS=1 when > 1)
     filter: FilterOptions = field(default_factory=FilterOptions)
 
@@ -227,6 +234,19 @@ class FitResult:
 def _run_start(args) -> dict:
     model, prep, opts, u0 = args
     obj = Objective(model, prep, opts)
+    nit = 0
+    if opts.trust is not None:
+        lo = np.maximum(obj.lo, u0 - opts.trust)
+        hi = np.minimum(obj.hi, u0 + opts.trust)
+        first = minimize(
+            obj.value_and_grad,
+            u0,
+            jac=True,
+            method="L-BFGS-B",
+            bounds=list(zip(lo, hi, strict=True)),
+            options={"maxiter": opts.maxiter, "maxcor": 20},
+        )
+        u0, nit = first.x, int(first.nit)
     res = minimize(
         obj.value_and_grad,
         u0,
@@ -239,15 +259,24 @@ def _run_start(args) -> dict:
         "u0": u0,
         "u": res.x,
         "f": float(res.fun),
-        "nit": int(res.nit),
+        "nit": nit + int(res.nit),
         "success": bool(res.success),
         "message": str(res.message),
         "evals": obj.n_evals,
     }
 
 
-def fit(model: LinearModel, data: IdData, options: FitOptions | None = None) -> FitResult:
-    """MAP fit of ``model``'s free parameters to ``data`` (spec §6.2)."""
+def fit(
+    model: LinearModel,
+    data: IdData,
+    options: FitOptions | None = None,
+    start: np.ndarray | None = None,
+) -> FitResult:
+    """MAP fit of ``model``'s free parameters to ``data`` (spec §6.2).
+
+    The first start is the prior centre, or ``start`` (natural units) when
+    given — a previous fit, in an outer loop such as draw detection (§6.3);
+    the others are drawn from the prior."""
     opts = options or FitOptions()
     if not model.free:
         raise ValueError("the model has no free parameters")
@@ -255,7 +284,8 @@ def fit(model: LinearModel, data: IdData, options: FitOptions | None = None) -> 
     obj = Objective(model, prep, opts)
     rng = np.random.default_rng(opts.seed)
     margin = 1e-6
-    starts = [np.clip(np.zeros(obj.p), obj.lo + margin, obj.hi - margin)]
+    u0 = np.zeros(obj.p) if start is None else obj.to_u(np.asarray(start, dtype=float))
+    starts = [np.clip(u0, obj.lo + margin, obj.hi - margin)]
     for _ in range(max(0, opts.n_starts - 1)):
         starts.append(np.clip(rng.standard_normal(obj.p), obj.lo + margin, obj.hi - margin))
     jobs = [(model, prep, opts, u0) for u0 in starts]
