@@ -154,3 +154,12 @@ def test_radiators_take_from_the_tank_what_they_give_the_zone():
     env = compose(h, include=["out", "z", "coupling", "radiators"])
     assert env.states == ("z",)
     assert env.matrices(env.prior_centre()).E[1, 0, env.inputs.index(Signal("t_sup"))] > 0
+
+
+def test_a_coupling_can_be_modulated():
+    text = RADIATORS_ON_TANK.replace('between = ["z", "out"]', 'between = ["z", "out"]\nflow_signal = "open"')
+    m = compose(loads_house(text))
+    k = m.modulations.index("open") + 1
+    M = m.matrices(m.prior_centre())
+    z = m.states.index("z")
+    assert M.A[k, z, z] < 0 and M.E[k, z, m.inputs.index(Signal("t_out"))] > 0
