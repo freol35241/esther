@@ -56,7 +56,9 @@ def stove_schedule(plan, device: str, level_column: str, start_column: str | Non
     and ``stop``, and level changes in between. A burn under way at the
     plan's start has no start command, only its stop — unless the plan
     starts it in its first step (``start_column``, the plan's start
-    indicator), which is a start now."""
+    indicator), which is a start now. A plan with the stove off in its
+    first step begins with a stop now: the plan does not know whether it
+    burns, and a stop of a cold stove does nothing."""
     lv = plan.decisions[level_column].to_numpy()
     idx = plan.index
     end_t = idx[-1] + pd.Timedelta(seconds=float(plan.dt[-1]))
@@ -72,10 +74,13 @@ def stove_schedule(plan, device: str, level_column: str, start_column: str | Non
     if starts_now:
         out.append(Command.of(plan, device, "start", int(lv[0]), idx[0], idx[0]))
     elif lv[0] <= 0:
+        # off now: a stop now (a no-op for a stove that is not burning, and
+        # the end of one that is)
+        out.append(Command.of(plan, device, "stop", 0, idx[0], idx[0]))
         while k < n and lv[k] <= 0:
             k += 1
         if k == n:
-            return []
+            return out
         out.append(Command.of(plan, device, "start", int(lv[k]), idx[k], idx[k]))
     cur = int(lv[k])
     j = k + 1
