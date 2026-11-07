@@ -41,6 +41,7 @@ class Tariff(Component):
 
     def plan_prepare(self, ctx) -> None:
         ctx.shared["electricity_price"] = self.price_per_kwh(ctx.signal(self.config["spot_signal"]))
+        ctx.shared["price_estimated"] = ctx.estimated(self.config["spot_signal"])
         ctx.shared["fuel_price"] = dict(self.config.get("fuel_price") or {})
 
     def plan(self, ctx) -> None:

@@ -267,3 +267,16 @@ def test_events_reach_the_context():
     ctx = pl.build(NOW, x, fc, {}, pl._initial_lin(fc, x, None), {})
     c = ctx.event_cover("heat_pump")
     assert c.sum() == pytest.approx(4.0) and c[:4].sum() == 0
+
+
+def test_terminal_value_prices_at_the_estimated_part():
+    # §8.6: the mean over the part of the price forecast that is a guess
+    h = house()
+    fc = forecast(NOW, h, price=lambda hr: np.where(hr < 2, 0.5, 0.1))
+    est = (fc.index.hour >= 2) & (fc.index.hour < 8)
+    fc.estimated["spot_price"] = est
+    plan = planner(h).plan(NOW, x0(h), fc)
+    price = fc["spot_price"] * 3.6e6 + 0.05  # €/kWh with the fee
+    hp = price * 0.6 / 2.0  # the heat pump's marginal cost of heat
+    expect = 0.9 * min(hp[est].mean(), price[est].mean())
+    assert plan.solver["terminal_per_kwh"] == pytest.approx(expect, rel=1e-6)

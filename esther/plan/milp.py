@@ -280,6 +280,7 @@ class MILP:
         options: SolveOptions | None = None,
         warm: Mapping[str, np.ndarray] | None = None,
         relax_and_fix: int = 0,
+        relax: bool = False,
     ) -> Solution:
         """Solve with HiGHS. ``warm``: block name → values (NaN = not given),
         a partial solution HiGHS completes into its first incumbent.

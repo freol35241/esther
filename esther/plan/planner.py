@@ -397,9 +397,7 @@ class Planner:
         if not ctx.floors or not ctx.heat_cost:
             return
         cost = np.min(np.vstack(ctx.heat_cost), axis=0)  # cheapest source per step
-        est = np.zeros(ctx.n, bool)
-        for c in ctx.forecast.estimated.columns:
-            est |= ctx.forecast.estimated[c].to_numpy(dtype=bool) & ("price" in c)
+        est = np.asarray(ctx.shared.get("price_estimated", np.zeros(ctx.n, bool)), dtype=bool)
         per_kwh = float(np.mean(cost[est])) if est.any() else float(np.mean(cost))
         per_kwh *= self.options.terminal_factor
         idx, coef, const = [], [], 0.0

@@ -17,15 +17,19 @@ measurements and forecasts and carries out its plans.
 
 ## Status
 
-Milestones M0–M2 (spec §11): package skeleton, CI, house loader with
-validation, a solver spike on a synthetic reference MILP, the identification
-dataset builder (`esther.data`) with an optional reader for a homeostat history
-store (`pip install 'esther[homeostat]'`, `esther.io.homeostat`), and the
-envelope model with its identification (`esther.core.model`,
-`esther.identify`): composition into a linear state-space model, a batched
-continuous-discrete Kalman filter, MAP fit over physical priors with
-uncertainty and identifiability, held-out validation with the acceptance gate,
-and synthetic recovery tests. Nothing plans a real house yet.
+Milestones M0–M4 (spec §11): package skeleton, CI, house loader with
+validation; the identification dataset builder (`esther.data`) with an
+optional reader for a homeostat history store (`pip install
+'esther[homeostat]'`, `esther.io.homeostat`); the model and its
+identification (`esther.core.model`, `esther.identify`): composition into a
+linear state-space model, a batched continuous-discrete Kalman filter, MAP
+fit over physical priors with uncertainty and identifiability, held-out
+validation with the acceptance gate, draw detection, synthetic recovery
+tests; and planning (M4): forecasters that learn from the house's own history
+(`esther.forecast`), the MILP planner over every component's contribution
+(`esther.plan`), actuation translators (`esther.actuate`) and a backtest
+harness with a digital twin and a leak check (`esther.backtest`). Nothing
+commands a real house yet: integration and executors are M5, outside esther.
 
 ```python
 from esther import load_house
@@ -40,6 +44,19 @@ val = validate(model, res, test)  # open-loop 1/6/24 h vs persistence
 print(report_markdown(res, val, acceptance_gate(res, val)))
 ```
 
+Planning, given a fit's values and forecasts made at `now`:
+
+```python
+from esther.forecast import combine
+from esther.plan import Planner
+from esther.actuate import translate
+
+planner = Planner(house, dict(zip(res.names, res.theta)), accepted=gate.accepted)
+forecast = combine([f.forecast(now, house.horizon, house.step) for f in forecasters])
+plan = planner.plan(now, state_estimate, forecast, previous=last_plan)
+commands = translate(plan, house)  # advisory plans give commands marked not actionable
+```
+
 Set `OPENBLAS_NUM_THREADS=1` when fitting with `FitOptions(workers=n)`: the
 filter's matrices are tiny and BLAS threads per process only compete.
 
@@ -47,7 +64,7 @@ filter's matrices are tiny and BLAS threads per process only compete.
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e '.[dev,spike]'
 pytest
 ruff check .
 python benchmarks/reference_milp.py     # solver spike, prints timings
