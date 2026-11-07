@@ -21,9 +21,15 @@ use. A component that does not override ``dynamics`` has none in this
 version (economics and comfort, until the planner) and is skipped by
 :func:`esther.core.model.compose`.
 
-The remaining contributions — decisions with their constraints and cost, and
-actuation — are added in M4. They are not stubbed here: an interface written
-before its first implementation would be a guess with the authority of code.
+From M4, a component contributes to the **planning problem** (§8) through
+:meth:`Component.plan` — its decision variables, constraints and costs,
+written into a :class:`~esther.plan.planner.PlanContext` — and turns a plan
+into device commands through :meth:`Component.actuate` (§8.7).
+:meth:`Component.plan_prepare` runs for every component before any
+:meth:`plan`, so that one can ask another for something (a wrapper asks its
+heat pump for on/off indicators) or publish shared inputs (the tariff's
+prices). Components contribute in ``plan_order``: sources, then circuits,
+wrappers, comfort and service, and the tariff last.
 """
 
 from __future__ import annotations
@@ -247,6 +253,7 @@ class Component:
     """
 
     type_name: ClassVar[str] = ""
+    plan_order: ClassVar[int] = 50
     fields: ClassVar[tuple[Field, ...]] = ()
     ports: ClassVar[tuple[Port, ...]] = ()
     params: ClassVar[tuple[Param, ...]] = ()
@@ -299,6 +306,17 @@ class Component:
     def boundary_signals(self) -> dict[str, str]:
         """Boundary name → the signal that gives its temperature."""
         return {}
+
+    # -- planning (spec §8) and actuation (§8.7) ------------------------------
+    def plan_prepare(self, ctx: Any) -> None:
+        """Before any component's :meth:`plan`: requests and shared inputs."""
+
+    def plan(self, ctx: Any) -> None:
+        """Contribute decisions, constraints and costs to the planning problem."""
+
+    def actuate(self, plan: Any) -> list[Any]:
+        """Translate a plan into commands for the device this component steers."""
+        return []
 
     # -- helpers -----------------------------------------------------------
     @classmethod
