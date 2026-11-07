@@ -241,3 +241,39 @@ def test_read_signals_needs_every_address(faulty: Path):
         read_signals(
             h, {"outdoor_temperature": "outdoor_sensor/temperature"}, E2E, T0, T0 + pd.Timedelta("1h")
         )
+
+
+FORECASTS = """
+CREATE TABLE forecasts (
+  series_id INTEGER NOT NULL REFERENCES series (id), issued_ts INTEGER NOT NULL, valid_ts INTEGER NOT NULL,
+  valid_end INTEGER, room_id INTEGER NOT NULL REFERENCES rooms (id), value NOT NULL,
+  PRIMARY KEY (series_id, issued_ts, valid_ts)) WITHOUT ROWID;
+"""
+
+
+def test_read_forecasts_merges_issues(tmp_path):
+    # two files: an archive with one issue, the live file with the next, each
+    # numbering the series differently; a third file without a forecasts table
+    for name, first_id, issues in (("a.db", 3, [0]), ("b.db", 9, [3600])):
+        make_store(tmp_path / name, {("forecast", "weather", "air_temperature"): []}, first_id=first_id)
+        con = sqlite3.connect(tmp_path / name)
+        con.executescript(FORECASTS)
+        con.execute("update series set source='nwp'")
+        for iss in issues:
+            con.executemany(
+                "insert into forecasts values (?,?,?,?,1,?)",
+                [(first_id, us(iss), us(iss + 3600 * h), None, 10.0 + iss / 3600 + h) for h in range(3)],
+            )
+        con.commit()
+        con.close()
+    make_store(tmp_path / "c.db", {TEMP: [(us(0), 1, 1.0)]})
+    h = HomeostatHistory([tmp_path / "a.db", tmp_path / "b.db", tmp_path / "c.db"], immutable=True)
+    f = h.read_forecasts("forecast:weather/air_temperature@nwp")
+    assert list(f.columns) == ["issued", "valid", "end", "value"]
+    assert f.issued.nunique() == 2 and len(f) == 6
+    assert f.issued.min() == T0 and f.valid.max() == T0 + pd.Timedelta("3h")
+    assert f["end"].isna().all()
+    late = h.read_forecasts("forecast:weather/air_temperature@nwp", start=T0 + pd.Timedelta("30min"))
+    assert late.issued.nunique() == 1
+    with pytest.raises(KeyError):
+        h.read_forecasts("forecast:weather/nothing@nwp")

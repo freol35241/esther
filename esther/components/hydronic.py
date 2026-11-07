@@ -65,12 +65,17 @@ class Radiators(Component):
 
     *Planning* (decision form): the decision is ``Q_rad ≥ 0`` into the zone,
     taken from ``source``, with ``0 ≤ Q_rad ≤ UA_rad (T_source − T_z)`` (the
-    shunt mixes down only; the constraint arrives with the planner, M4).
+    shunt mixes down only) and, with ``supply_max``, ``Q_rad ≤ UA_rad
+    (supply_max − T_z)``, at each step's start temperatures. The supply
+    temperature it needs, ``T_z + Q_rad / UA_rad``, is a result of the plan.
     """
+
+    plan_order = 15
 
     fields = (
         String("supply_signal", required=False, doc="measured supply temperature"),
         String("flow_signal", required=False, doc="share of each step the circuit flows, 0..1"),
+        Quantity("supply_max", dim=TEMPERATURE, absolute=True, required=False, min=273.15, max=373.15),
     )
     ports = (
         Port("zone", kind="node", heats=True),
@@ -103,6 +108,23 @@ class Radiators(Component):
         return [
             Transfer(p["UA_rad"], Signal(supply), zone, to=zone, frm=src, modulation=flow, frm_optional=True)
         ]
+
+    def plan(self, ctx) -> None:
+        name = self.name
+        if not ctx.has_decision(f"{name}.Q"):
+            return
+        U = ctx.decision(f"{name}.Q")
+        ua = float(ctx.values(name).get("UA_rad", 250.0)) / 1000.0  # kW/K
+        zone, src = self.refs["zone"], self.refs.get("source")
+        Xz = ctx.state(zone)[:-1]
+        if src and ctx.has_state(src):
+            Xs = ctx.state(src)[:-1]
+            ctx.milp.add([(U, 1.0), (Xs, -ua), (Xz, ua)], ub=0.0, name=f"{name} mixes down only")
+        if self.config.get("supply_max") is not None:
+            ctx.milp.add(
+                [(U, 1.0), (Xz, ua)], ub=ua * (self.config["supply_max"] - 273.15), name=f"{name} supply max"
+            )
+        ctx.add_result(f"{name}.supply", lambda x: x[Xz] + 273.15 + x[U] / ua)
 
 
 class JacketTank(Component):
