@@ -68,7 +68,7 @@ class PlanningController:
         except (PlanError, LookupError) as e:
             rec.update({"status": "no plan", "reason": str(e), "seconds": time.perf_counter() - t0})
             self.log.append(rec)
-            self.previous = None
+            # the last plan stays the warm start: shifted, it is still the best guess
             return []
         except LeakError:
             raise

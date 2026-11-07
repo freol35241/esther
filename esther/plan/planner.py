@@ -75,7 +75,7 @@ class PlannerOptions:
     validity: float = 1800.0
     max_age: Mapping[str, float] = field(default_factory=dict)
     warm_start: bool = True
-    relax_and_fix: int = 4  # windows of the cold-start heuristic; 0 or 1 for none
+    relax_and_fix: int = 0  # windows of a cold-start heuristic (measured: no gain on the reference plant)
     audit: bool = True
 
 
@@ -464,10 +464,17 @@ class Planner:
             if p > 0 and left < 0.1 * budget:
                 passes[-1]["unresolved"] = True  # no time for the re-linearised pass: keep the first
                 break
-            ctx = self.build(now, x, forecast, devices, lin, pins)
+            ctx_p = self.build(now, x, forecast, devices, lin, pins)
             rf = self.options.relax_and_fix if warm is None else 0
             opts = replace(self.options.solve, time_limit=max(left, 0.05))
-            sol = ctx.milp.solve(opts, warm, relax_and_fix=rf)
+            sol_p = ctx_p.milp.solve(opts, warm, relax_and_fix=rf)
+            if p > 0 and not sol_p.ok:
+                # the re-linearised pass found nothing in the time left: the
+                # first pass's plan stands, flagged
+                passes[-1]["unresolved"] = f"pass {p + 1}: {sol_p.status} ({sol_p.reason})"
+                passes[-1]["status"] = "limit" if passes[-1]["status"] == "optimal" else passes[-1]["status"]
+                break
+            ctx, sol = ctx_p, sol_p
             passes.append(
                 {
                     "status": sol.status,

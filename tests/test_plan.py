@@ -280,3 +280,45 @@ def test_terminal_value_prices_at_the_estimated_part():
     hp = price * 0.6 / 2.0  # the heat pump's marginal cost of heat
     expect = 0.9 * min(hp[est].mean(), price[est].mean())
     assert plan.solver["terminal_per_kwh"] == pytest.approx(expect, rel=1e-6)
+
+
+def test_a_failed_second_pass_keeps_the_first(monkeypatch):
+    # the re-linearised pass finding nothing must not cost the plan
+    h = house(hp_extra='sink_reference = "45 °C"')
+    pl = planner(h)
+    pl.values["heat_pump"]["Q"] = 2000.0
+    pl.values["heat_pump"]["dQ_dT"] = 40.0
+    real = MILP.solve
+    calls = []
+
+    def second_fails(self, *a, **k):
+        calls.append(1)
+        sol = real(self, *a, **k)
+        if len(calls) == 2:
+            sol.x, sol.status = None, "failed"
+        return sol
+
+    monkeypatch.setattr(MILP, "solve", second_fails)
+    plan = pl.plan(NOW, x0(h, tank=35.0), forecast(NOW, h, outdoor=-5.0, price=cheap_nights))
+    assert len(calls) == 2 and plan.flagged
+    assert "unresolved" in plan.solver["passes"][-1]
+
+
+def test_a_failed_warm_start_is_retried_cold(monkeypatch):
+    # HiGHS gives up the whole run when completing a user solution fails
+    # numerically; the solver layer then solves again without it
+    from esther.plan.milp import Solution
+
+    m = MILP()
+    x = m.var("x", 3, 0, 1, integer=True, cost=[-1.0, -2.0, -3.0])
+    m.add([(x[None, :], np.ones((1, 3)))], ub=2.0)
+    real = MILP._run
+
+    def fail_when_warm(self, arr, opts, tl, warm_x, nl):
+        if warm_x is not None:
+            return Solution("failed", None, np.nan, np.nan, 0.0, 0.0, 0, True, "kNotset")
+        return real(self, arr, opts, tl, warm_x, nl)
+
+    monkeypatch.setattr(MILP, "_run", fail_when_warm)
+    s = m.solve(warm={"x": np.array([1.0, 1.0, 0.0])})
+    assert s.ok and s.objective == pytest.approx(-5.0) and "warm start failed" in s.reason

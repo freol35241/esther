@@ -303,6 +303,14 @@ class MILP:
                 warm_x = x_rf
         left = max(0.05, opts.time_limit - (time.perf_counter() - t0))
         sol = self._run(arr, opts, left, warm_x, opts.node_limit)
+        if sol.x is None and warm_x is not None and sol.status != "infeasible":
+            # HiGHS completes a user solution with an LP before it starts; when
+            # that LP fails numerically it gives up on the whole run. Again,
+            # cold, with what time is left.
+            left = max(0.05, opts.time_limit - (time.perf_counter() - t0))
+            retry = self._run(arr, opts, left, None, opts.node_limit)
+            retry.reason = f"warm start failed ({sol.reason}); cold: {retry.reason}".strip()
+            sol = retry
         sol.seconds = time.perf_counter() - t0
         if rf_info is not None:
             sol.reason = (sol.reason + " " if sol.reason else "") + rf_info
