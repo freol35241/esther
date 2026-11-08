@@ -12,7 +12,30 @@ KWH = 3.6e6
 
 
 class Tariff(Component):
-    """Electricity: spot price per step + fixed per-kWh fees, then VAT. Fuel: price per kg.
+    """What a bought kWh and a kg of fuel cost, in the house's one currency.
+
+    Electricity per imported kWh::
+
+        (fx · spot + energy_fee + Σ fees) · (1 + vat)
+
+    - ``spot`` is the spot-price signal, in the currency the market quotes
+      it in (often not the house's);
+    - ``fx`` converts it to the house's currency (house currency per unit of
+      the spot's; 1 when they are the same). It is a fixed rate: state its
+      date and source where the house file sets it;
+    - ``energy_fee`` and ``fees`` (name → price per energy) are the per-kWh
+      adders — network transfer, energy tax, a supplier's markup — in the
+      house's currency, **before** VAT;
+    - ``vat`` applies to the spot and the adders alike.
+
+    Fixed periodic fees change no decision and are not modelled; nor is a
+    power (peak) charge. ``currency`` names the house's currency for reports.
+
+    *Export:* none is valued. The planner plans every source's electricity as
+    a bought kWh at this price, and nothing in a plan earns from export; a
+    house with a solar surplus is therefore priced conservatively (its own
+    surplus would cost it only the export price it forgoes). Fuel: price per
+    kg, in the house's currency.
 
     *Planning:* every source's electricity is priced at the step's price
     (currency/kWh), its fuel at the fuel's price; the tariff contributes last.
@@ -20,9 +43,24 @@ class Tariff(Component):
 
     plan_order = 90
     fields = (
-        String("spot_signal", doc="the spot-price signal, currency/kWh"),
+        String("spot_signal", doc="the spot-price signal, the spot's currency per energy"),
+        Number(
+            "fx",
+            required=False,
+            default=1.0,
+            min=0.0,
+            min_exclusive=True,
+            doc="house currency per spot currency",
+        ),
         Quantity("energy_fee", dim=PRICE_PER_ENERGY, required=False, default=0.0, min=0.0),
+        Mapping_(
+            "fees",
+            required=False,
+            default={},
+            value_field=Quantity("fee", dim=PRICE_PER_ENERGY),
+        ),
         Number("vat", required=False, default=0.0, min=0.0, max=1.0),
+        String("currency", required=False, doc="the house's currency, for reports"),
         Mapping_(
             "fuel_price",
             required=False,
@@ -31,13 +69,20 @@ class Tariff(Component):
         ),
     )
 
-    def signals(self) -> list[str]:
-        return [self.config["spot_signal"]]
+    def adders(self) -> float:
+        """The per-energy adders before VAT, house currency per J."""
+        c = self.config
+        return float(c.get("energy_fee", 0.0)) + float(sum((c.get("fees") or {}).values()))
 
     def price_per_kwh(self, spot_si) -> np.ndarray:
-        """Currency per kWh from the spot signal in SI (currency per J)."""
+        """House currency per bought kWh from the spot signal in SI (the
+        spot's currency per J)."""
         c = self.config
-        return (np.asarray(spot_si, dtype=float) + c.get("energy_fee", 0.0)) * KWH * (1.0 + c.get("vat", 0.0))
+        spot = np.asarray(spot_si, dtype=float) * c.get("fx", 1.0)
+        return (spot + self.adders()) * KWH * (1.0 + c.get("vat", 0.0))
+
+    def signals(self) -> list[str]:
+        return [self.config["spot_signal"]]
 
     def plan_prepare(self, ctx) -> None:
         ctx.shared["electricity_price"] = self.price_per_kwh(ctx.signal(self.config["spot_signal"]))

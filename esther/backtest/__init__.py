@@ -10,10 +10,13 @@
 - :func:`score` — cost, comfort (K·h outside the band), hot-water service,
   source hours and starts; :func:`prediction_errors` — the plans' predicted
   trajectories against what was realised, at 1/6/24 h (§10.2).
+- :func:`fit_by_replay` — learns a device habit (a scalar) as the value at
+  which a replay of the device on the twin reproduces the record.
 - :func:`leak_check` — re-plans with every datum after ``now`` poisoned and
   requires the same plan: a forecaster that reads the future cannot pass.
 """
 
+from .calibrate import fit_by_replay
 from .harness import BacktestResult, PlanningController, leak_check, run
 from .score import degree_hours, prediction_errors, score, solve_time_summary
 from .twin import LinearTwin
@@ -23,6 +26,7 @@ __all__ = [
     "LinearTwin",
     "PlanningController",
     "degree_hours",
+    "fit_by_replay",
     "leak_check",
     "prediction_errors",
     "run",
