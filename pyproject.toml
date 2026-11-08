@@ -29,7 +29,7 @@ homeostat = []
 # The M0 spike's modelling layers (benchmarks/reference_milp.py); not used by esther itself.
 spike = ["cvxpy>=1.6", "linopy>=0.4"]
 dev = [
-    "pytest>=8",
+    "pytest>=9.2.0",
     "ruff>=0.6",
 ]
 
