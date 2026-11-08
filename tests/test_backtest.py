@@ -182,3 +182,26 @@ def test_closed_loop_run_and_fallback():
     tw2 = LinearTwin(m, theta, ex, device, 300.0, np.array([x0(h)[s] for s in m.states]))
     res2 = run(tw2, ctl2, NOW, NOW + pd.Timedelta("30min"), 900.0)
     assert (res2.decisions.status == "no plan").all()  # §8.8: no plan, the device's own fallback runs
+
+
+def test_fit_by_replay_finds_the_habit_and_flags_the_bound():
+    from esther.backtest import fit_by_replay
+
+    idx = pd.date_range("2026-01-01", periods=12 * 24 * 6, freq="5min", tz="UTC")
+    rng = np.random.default_rng(1)
+    base = rng.uniform(0.2, 0.6, len(idx))
+
+    def replay(c):  # the device runs more the higher its stop
+        return pd.Series(np.clip(base * (c - 48.0) / 3.0, 0, 1), index=idx)
+
+    observed = replay(51.0) + rng.normal(0, 0.02, len(idx))
+    f = fit_by_replay(replay, np.arange(49.0, 54.01, 0.5), observed)
+    assert f["best"] == 51.0 and not f["on_bound"]
+    assert f["replayed_total"] == pytest.approx(f["observed_total"], rel=0.02)
+    # a grid that stops short of the truth says so
+    g = fit_by_replay(replay, [49.0, 49.5, 50.0], observed)
+    assert g["best"] == 50.0 and g["on_bound"]
+    # only the valid steps count
+    valid = pd.Series(idx < idx[len(idx) // 2], index=idx)
+    h = fit_by_replay(replay, np.arange(49.0, 54.01, 0.5), observed, valid=valid)
+    assert h["observed_total"] == pytest.approx(float(observed[valid].sum()))

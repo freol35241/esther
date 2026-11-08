@@ -51,6 +51,7 @@ __all__ = [
     "fit_aux_share",
     "fit_curve",
     "fit_response",
+    "fit_thermostat",
     "hysteresis",
     "replay_score",
 ]
@@ -230,6 +231,84 @@ def fit_aux_share(
         "aux_cold_below": float(cold_below),
         "rmse": float(np.sqrt(np.mean(res**2))),
         "n": len(y),
+    }
+
+
+def fit_thermostat(
+    on,
+    sensor,
+    start: float | None = None,
+    stop: float | None = None,
+    valid=None,
+    resolution: float = 0.1,
+) -> dict[str, float]:
+    """Learn a thermostat's **effective** start and stop limits from routine
+    operation: the limits at which :func:`hysteresis` on the recorded
+    ``sensor`` best reproduces the recorded on-state ``on`` (an on-fraction
+    per step, on at ≥ 0.5) over the ``valid`` steps. A limit passed in is
+    held; the free ones are searched on a ``resolution`` grid between the
+    10th and 90th percentiles of the sensor at the recorded starts (or
+    stops), the two in turn when both are free.
+
+    What a controller reports as its limits need not be where it switches —
+    another rule, a filter on its sensor, a setting not reported — and the
+    effective limit is what a replay of it needs. Each run of valid steps
+    starts from the recorded state, so a run carried in from outside the
+    valid steps (another mode) is not scored as a miss.
+
+    Returns ``start``, ``stop``, the replay's ``agreement``, the median
+    sensor at the recorded ``starts``/``stops`` (``start_median``,
+    ``stop_median``) and their counts.
+    """
+    d = np.asarray(on, dtype=float)
+    v = np.asarray(sensor, dtype=float)
+    ok = np.isfinite(d) & np.isfinite(v)
+    if valid is not None:
+        ok &= np.asarray(valid, dtype=bool)
+    m = d >= 0.5
+    prev_ok = np.r_[False, ok[:-1]]
+    prev_m = np.r_[False, m[:-1]]
+    starts = ok & prev_ok & m & ~prev_m
+    stops = ok & prev_ok & ~m & prev_m
+    if stops.sum() < 5 or starts.sum() < 5:
+        raise ValueError("need at least five recorded starts and stops to learn a thermostat's limits")
+    first = ok & ~prev_ok
+
+    def replay(lo: float, hi: float) -> float:
+        state = False
+        hit = 0
+        for k in np.flatnonzero(ok):
+            if first[k]:
+                state = bool(m[k])
+            elif v[k] <= lo:
+                state = True
+            elif v[k] >= hi:
+                state = False
+            hit += state == m[k]
+        return hit / int(ok.sum())
+
+    def grid(at) -> np.ndarray:
+        a, b = np.quantile(v[at], [0.1, 0.9])
+        return np.arange(np.floor(a / resolution), np.ceil(b / resolution) + 1) * resolution
+
+    lo = float(np.median(v[starts])) if start is None else float(start)
+    hi = float(np.median(v[stops])) if stop is None else float(stop)
+    for _ in range(2 if start is None and stop is None else 1):
+        if stop is None:
+            cand = [c for c in grid(stops) if c > lo]
+            hi = max(cand, key=lambda c: replay(lo, c)) if cand else hi
+        if start is None:
+            cand = [c for c in grid(starts) if c < hi]
+            lo = max(cand, key=lambda c: replay(c, hi)) if cand else lo
+    return {
+        "start": float(lo),
+        "stop": float(hi),
+        "agreement": float(replay(lo, hi)),
+        "start_median": float(np.median(v[starts])),
+        "stop_median": float(np.median(v[stops])),
+        "starts": int(starts.sum()),
+        "stops": int(stops.sum()),
+        "n": int(ok.sum()),
     }
 
 
@@ -421,6 +500,12 @@ class IVT490Plant(Component):
         _temp("supply_min", default=273.15 + 14.0, doc="the curve's floor"),
         _temp("tank_lower", default=273.15 + 49.5, doc="hot-water start limit on the tank sensor"),
         _temp("tank_upper", default=273.15 + 54.5, doc="hot-water stop limit on the tank sensor"),
+        _temp(
+            "tank_stop_auto",
+            required=False,
+            doc="where the controller left to itself (auto) actually stops charging, if not at tank_upper "
+            "(learned: fit_thermostat, or esther.backtest.fit_by_replay)",
+        ),
         _temp("condensing_max", default=273.15 + 60.0, doc="the compressor stops above this jacket"),
         # the controller's own heater, learned (fit_aux_share)
         Number("aux_share", required=False, default=0.0, min=0.0, max=1.0),
@@ -436,6 +521,15 @@ class IVT490Plant(Component):
         Port("heater", kind="component", required=False, component_type="ElectricHeater"),
         Port("outdoor", kind="boundary", required=False, doc="the real outdoor temperature"),
     )
+
+    def check(self) -> list[tuple[str | None, str]]:
+        c = self.config
+        if not c["tank_lower"] < c["tank_upper"]:
+            return [("tank_upper", "the stop limit must exceed the start limit")]
+        stop = c.get("tank_stop_auto")
+        if stop is not None and not c["tank_lower"] < stop:
+            return [("tank_stop_auto", "the stop must lie above the start limit (tank_lower)")]
+        return []
 
     def dynamics(self, p: Mapping[str, float], mode: str) -> list:
         return []
@@ -468,6 +562,16 @@ class IVT490Plant(Component):
         hw = hysteresis(tank_seen, tank_lower, tank_upper, valid=valid)
         ht = hysteresis(jacket, jt - self.config["heating_differential"], jt, valid=valid)
         return {"hot_water": hw, "heating": ht, "compressor": hw | ht}
+
+    def stop_limit(self, mode: str) -> float:
+        """Where hot-water charging stops on the tank sensor, K: the learned
+        ``tank_stop_auto`` when the controller is left to itself, the
+        reported upper limit when the mode is steered (BOOST charges to it
+        through the fake sensor; BLOCK shows the tank above it)."""
+        c = self.config
+        if mode == "auto" and c.get("tank_stop_auto") is not None:
+            return float(c["tank_stop_auto"])
+        return float(c["tank_upper"])
 
     def aux_alpha(self, t_out, boost: bool = True) -> np.ndarray:
         """The heater's expected share per unit of compressor running."""
@@ -622,7 +726,7 @@ class IVT490Device:
         seen = float(fake_tank_sensor(mode, tank_sensor, lo, hi, c["margin"]))
         if seen <= lo:
             self._hw = True
-        elif seen >= hi:
+        elif seen >= self.plant.stop_limit(mode):
             self._hw = False
         diff = c["heating_differential"]
         if jacket <= target - diff:

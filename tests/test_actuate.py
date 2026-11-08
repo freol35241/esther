@@ -9,7 +9,7 @@ from synthetic_plan import WRAPPERS, K, forecast, house, planner, x0
 
 from esther import loads_house
 from esther.actuate import Command, stove_schedule, translate
-from esther.components.wrappers import IVT490Device, fit_aux_share, fit_response
+from esther.components.wrappers import IVT490Device, fit_aux_share, fit_response, fit_thermostat
 from esther.forecast import Event
 from esther.plan import Planner, PlannerOptions, SolveOptions
 
@@ -254,3 +254,75 @@ def test_fit_response_is_monotone():
     knots = fit_response(x, y, np.arange(0, 11, 1.0))
     ys = [k[1] for k in knots]
     assert all(b >= a for a, b in itertools.pairwise(ys))
+
+
+def _thermostat_record(n=6000, start=K + 49.5, stop=K + 51.2, seed=5):
+    """A tank under a thermostat (start/stop on its sensor) with standing
+    loss and random draws, 5-min steps; the sensor noisy."""
+    rng = np.random.default_rng(seed)
+    t, on = start + 0.5, False
+    temp, rec = np.empty(n), np.empty(n)
+    for k in range(n):
+        seen = t + rng.normal(0, 0.08)
+        if seen <= start:
+            on = True
+        elif seen >= stop:
+            on = False
+        temp[k], rec[k] = seen, float(on)
+        t += (0.55 if on else -0.03) - (rng.uniform(1.0, 4.0) if rng.uniform() < 0.02 else 0.0)
+    return rec, temp
+
+
+def test_fit_thermostat_learns_an_effective_stop():
+    rec, temp = _thermostat_record()
+    f = fit_thermostat(rec, temp, start=K + 49.5)
+    assert f["stop"] == pytest.approx(K + 51.2, abs=0.3)
+    assert f["stops"] > 50 and f["agreement"] > 0.95
+    # control: the reported limit (higher) replays the record worse
+    worse = fit_thermostat(rec, temp, start=K + 49.5, stop=K + 54.5)
+    assert worse["stop"] == K + 54.5 and worse["agreement"] < f["agreement"] - 0.1
+    # both free: the start is found too
+    both = fit_thermostat(rec, temp)
+    assert both["start"] == pytest.approx(K + 49.5, abs=0.3)
+    assert both["stop"] == pytest.approx(K + 51.2, abs=0.3)
+
+
+def test_fit_thermostat_holds_out():
+    """Learned on one stretch, it predicts the next one's stops."""
+    rec, temp = _thermostat_record(n=8000)
+    tr = fit_thermostat(rec[:4000], temp[:4000], start=K + 49.5)
+    te = fit_thermostat(rec[4000:], temp[4000:], start=K + 49.5, stop=tr["stop"])
+    ref = fit_thermostat(rec[4000:], temp[4000:], start=K + 49.5)
+    reported = fit_thermostat(rec[4000:], temp[4000:], start=K + 49.5, stop=K + 54.5)
+    assert tr["stop"] == pytest.approx(ref["stop"], abs=0.25)
+    assert te["agreement"] > 0.9 and te["agreement"] > reported["agreement"] + 0.1
+
+
+def test_fit_thermostat_needs_stops():
+    with pytest.raises(ValueError):
+        fit_thermostat(np.zeros(100), np.full(100, K + 50))
+
+
+def test_ivt_device_auto_stops_at_the_learned_limit():
+    h = loads_house(IVT.replace("aux_share = 0.05", 'aux_share = 0.05\ntank_stop_auto = "51.2 °C"'))
+    pl = h["plant"]
+    lo, hi, stop = pl.config["tank_lower"], pl.config["tank_upper"], pl.config["tank_stop_auto"]
+    assert pl.stop_limit("auto") == stop and pl.stop_limit("boost") == hi
+    dev = IVT490Device(pl)
+    assert dev.step("auto", K + 20, lo - 0.5, K + 45, K)["compressor"] == 1.0
+    assert dev.step("auto", K + 20, stop - 0.2, K + 45, K)["compressor"] == 1.0
+    assert dev.step("auto", K + 20, stop + 0.1, K + 45, K)["compressor"] == 0.0
+    # BOOST still charges to the reported upper limit
+    assert dev.step("boost", K + 20, stop + 0.1, K + 45, K)["compressor"] == 1.0
+    assert dev.step("boost", K + 20, hi + 0.1, K + 45, K)["compressor"] == 0.0
+    # without it, auto stops at the upper limit as before
+    dev0 = IVT490Device(loads_house(IVT)["plant"])
+    dev0.step("auto", K + 20, lo - 0.5, K + 45, K)
+    assert dev0.step("auto", K + 20, stop + 0.1, K + 45, K)["compressor"] == 1.0
+
+
+def test_ivt_stop_below_the_start_refused():
+    from esther.house import HouseError
+
+    with pytest.raises(HouseError):
+        loads_house(IVT.replace("aux_share = 0.05", 'aux_share = 0.05\ntank_stop_auto = "48 °C"'))

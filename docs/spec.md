@@ -457,11 +457,37 @@ compressor off and the heater on for its window, mode AUTO.
 (§10.2), with its circulation pump as a learned response to the supply
 target (`fit_response`).
 
+*As built (M4b):* the controller **left to itself** (AUTO) need not stop
+charging at the upper limit it reports: a hot-water run can end on a sensor
+the model does not hold or on a rule the controller does not report. The
+wrapper carries that effective stop, `tank_stop_auto`, as a habit learned
+from routine operation, not set by hand: either as the threshold on the tank
+sensor at which a replay of the thermostat reproduces the record
+(`fit_thermostat`), when the sensor is what the model holds; or, when it is
+not (a one-store tank seen through one sensor), as the value at which the
+device replayed on the twin reproduces the recorded running
+(`esther.backtest.fit_by_replay`). Steered modes are unaffected: BOOST charges
+to the reported upper limit through the fake sensor, BLOCK shows the tank
+above it.
+
 #### 4.5.7 Economics and comfort
 
 - **`Tariff`** — electricity: spot price per step plus fixed per-kWh fees plus
   VAT, as configured; fuel: price per kg. The price forecast supplies the spot
   part (§7.2). Export price, if any, for houses with PV.
+
+  *As built (M4b):* a bought kWh costs `(fx · spot + Σ adders) · (1 + vat)`.
+  Every price in a house is in one currency (`currency` names it); the spot
+  is read in whatever currency the market quotes it in and `fx` (house
+  currency per spot currency, a fixed rate whose date and source the house
+  file states) converts it. The adders (`energy_fee`, and `fees` by name:
+  network transfer, energy tax, a supplier's markup) are per kWh before VAT,
+  and VAT applies to the spot and the adders alike. Fixed periodic fees change
+  no decision and are not modelled; nor is a power (peak) charge. **Export is
+  not valued**: every planned kWh is a bought one at this price and nothing in
+  a plan earns from export, so a house with a solar surplus is priced
+  conservatively. Valuing export (and self-consumption at the export price it
+  forgoes) needs a model of the house's net load and is open.
 - **`ComfortBand`** — per zone: a setpoint schedule and a band. Soft: linear
   penalty per K·h outside the band, quadratic optional. Hard limits (a floor
   that is never planned below) are separate and wider.
@@ -1030,6 +1056,13 @@ predicted trajectories are scored against the realised ones at 1/6/24 h.
 **leak check** that re-plans with every datum after `now` poisoned and
 requires the same plan — a forecaster that reads the future cannot pass it,
 whatever its provenance claims.
+
+A device habit the twin needs but the record does not show directly (an
+effective stop limit, §4.5.6) is learned by **replay**: `fit_by_replay`
+replays the device on the twin under each candidate value and keeps the one
+whose output (summed per day, over the steps given) is closest to the
+record's, flagging an optimum on the grid's edge as not identified. It is to
+be checked on held-out days like any fit.
 
 ### 10.3 Shadow
 
