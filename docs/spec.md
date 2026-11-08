@@ -1,6 +1,7 @@
 # esther v1 — specification
 
-Status: **agreed; being built** (M0–M3 merged, M4 in review; §11). The v0 line
+Status: **agreed; being built** (M0–M4 merged; M5a, the library side of M5,
+in review; §11). The v0 line
 (single-state model, hand-set parameters, SLSQP, MQTT service) is preserved at
 tag `v0-legacy`; the unmerged dev line ends at `v0.4.0_dev9`. v1 is a rewrite in
 the same repository, not an increment.
@@ -976,6 +977,13 @@ stove's schedule is its next burn: start with level, level changes, stop.
   plan is **flagged** (`Plan.flagged`); with none, no plan. A wall-clock
   stop is reported as not reproducible (N2); a node limit is the
   deterministic budget.
+- *As built (M5a):* a **state estimate** that cannot be made is no plan
+  either: `estimate_state` refuses (`StateError`, with a reason) when the
+  window holds no usable data, when its newest usable step is older than
+  `max_age`, or when the segment it ends is shorter than `min_steps`. A
+  **model file** fitted for another house, or edited after it was written,
+  is refused on load (`ModelFileError`); one whose gate refused loads, and
+  plans from it are advisory.
 
 ---
 
@@ -1011,6 +1019,43 @@ esther:
 
 The asymmetry is deliberate: for a heat pump silence is safe, for a lit stove it
 is not, so the stove's stop is part of the start.
+
+*As built (M5a):* three library pieces a live integration needs, so that it
+plans from a stored fit, a live state estimate and the previous plan:
+
+- **The fitted-model file** (`esther.identify.model_file`). `fitted_model`
+  takes the house file's text, the values (a `FitResult`, or flat
+  `"component.param"` values — several fits merged, learned device habits),
+  the `GateDecision` and optionally the candidate's `Validation`, and free
+  provenance (strings). The JSON holds the values, the verdict (accepted,
+  reasons, warnings), the gate's metrics as numbers (the gated RMSE and its
+  reference; open-loop, persistence and innovation tables; non-finite as
+  null), the provenance, `house_sha256` (of the house text) and `version`: a
+  sha256 over canonical JSON of the values and the house hash, independent
+  of key order and number formatting. `load_model(path, house_text)`
+  refuses a house hash mismatch and a stored version that no longer
+  matches the content; without a gate decision a model is not accepted.
+  `Planner.from_model` takes the values, the verdict (refused: advisory) and
+  the version from it; `load_planner(house_path, model_path)` reads both
+  files and checks one against the other. The hash is of the text: any
+  edit to the house file, a comment included, asks for a new file.
+- **The live state estimate** (§6.6; `esther.identify.estimate_state`):
+  the identification filter, unchanged, over `[now − window, now]` of a
+  frame on the identification grid, segmented as the fit segments
+  (`IdData.from_frame`, gaps end segments, `optional` measurements as in
+  the fit). Only steps that have ended by `now` are read. The result is the
+  filtered mean, sd and covariance at the start of the newest usable step
+  (the filter's convention: after that step's measurement), its time, and
+  the number of steps behind it; refusals as in §8.8. The model is the
+  identification-mode one; its states are named as the planner's, which
+  takes the mean by name.
+- **The plan as JSON** (`esther.plan.plan_to_json` / `plan_from_json`):
+  every field of a `Plan` round-trips exactly — floats by shortest repr,
+  NaN and the infinities tagged so the text stays strict JSON, timestamps
+  as nanoseconds with their time zone, arrays with dtype and shape, frames
+  column by column — including the warm-start store, so a planner restarted
+  from a stored plan warm-starts exactly as it would have from memory (M4:
+  a cold start under a short budget can return a poor incumbent).
 
 ### 9.3 What esther publishes
 

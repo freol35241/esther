@@ -118,19 +118,21 @@ draw_signal = "draw_heat"
 """
 
 
-def house(
+def house_text(
     horizon="12h", hp_extra="", heater_extra="", stove_extra="modulating = true", pellet_price=0.4, extra=""
-):
-    return loads_house(
-        BASE.format(
-            horizon=horizon,
-            hp_extra=hp_extra,
-            heater_extra=heater_extra,
-            stove_extra=stove_extra,
-            pellet_price=pellet_price,
-            extra=extra,
-        )
+) -> str:
+    return BASE.format(
+        horizon=horizon,
+        hp_extra=hp_extra,
+        heater_extra=heater_extra,
+        stove_extra=stove_extra,
+        pellet_price=pellet_price,
+        extra=extra,
     )
+
+
+def house(**kw):
+    return loads_house(house_text(**kw))
 
 
 def forecast(now, h, outdoor=0.0, price=None, draws=None, extra=None) -> Forecast:
