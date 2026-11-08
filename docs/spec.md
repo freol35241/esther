@@ -97,6 +97,15 @@ thermal model that learns its parameters from the house's own history**.
   time limit returns the incumbent if one exists, flagged, or no plan.
 - **N2.** Deterministic: the same inputs, parameters and solver version give the
   same plan.
+
+  *As measured in M4* (the reference plant, a laptop-class x86, HiGHS single
+  thread): warm-started from the previous plan, the 10 s limit is met with an
+  incumbent close to a long reference solve; the 2 s SHOULD is not, and a
+  cold start can return a poor incumbent (an open item: a cheap first
+  incumbent, as M0's two-phase solve). A wall-clock limit is not
+  deterministic; a node limit is, at a cost in time — each plan reports which
+  stopped it. HiGHS crashed (a segfault) a few times in long runs, so a
+  planner belongs in a process of its own; a crash is "no plan" (§8.8).
 - **N3.** Python ≥ 3.11, pure-Python dependencies plus wheels from PyPI. No
   compiled code of our own.
 - **N4.** Internal units are SI: W, J, K, s, kg. °C appears only at the I/O
