@@ -12,28 +12,45 @@ can falsify. In this version a wrapper gives
   that it can be **replayed** against recorded data and scored before a
   planner relies on it (:func:`replay_score`).
 
-Decisions, constraints and costs are added with the planner (M4). Wrappers
-contribute no thermal dynamics: the physical sources they wrap
+From M4 a wrapper also writes the device's own behaviour into the plan
+(§8.3–8.4): for the reference plant, the compressor the plan runs is run by
+BOOST and kept off by BLOCK, so it stops at the tank thermostat's upper limit
+and at its condensing limit; the electric heater is the controller's, not
+esther's, and comes as an **expected share** of the compressor's running
+learned from history (:func:`fit_aux_share`) — which is how BOOST's heater
+cost is priced; and device-internal events fix the decisions they occupy to
+"let the device do it". :meth:`IVT490Plant.actuate` turns a plan into the
+two fake-sensor inputs, and :class:`IVT490Device` replays the device's logic
+step by step for a simulated plant (the backtest's digital twin).
+
+Wrappers contribute no thermal dynamics: the physical sources they wrap
 (:class:`~esther.components.sources.HeatPump`, the tank) do.
 """
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
+import pandas as pd
 
 from ..core.component import Component, Number, Port, Quantity
 from ..core.units import POWER, TEMPERATURE
 
+T0 = 273.15
+
 __all__ = [
     "MODES",
     "CurveControlledHeatSource",
+    "IVT490Device",
     "IVT490Plant",
     "ReplayScore",
     "ThermostatChargedTank",
+    "fit_aux_share",
     "fit_curve",
+    "fit_response",
     "hysteresis",
     "replay_score",
 ]
@@ -182,6 +199,60 @@ def replay_score(predicted_on, measured_fraction, valid=None, tolerance: int = 1
     return ReplayScore(n, agree, on, off, rec, len(starts))
 
 
+def fit_aux_share(
+    compressor, heater_share, outdoor, boost=None, cold_below: float = 281.15, valid=None
+) -> dict[str, float]:
+    """Learn a controller's auxiliary-heat habit from history: the heater's
+    expected share per step as ``δ · (share + cold_slope · max(0,
+    cold_below − T_out) + boost · [mode = boost])``, by least squares over
+    the steps given (``δ`` the compressor's on-fraction). The trigger of a
+    controller's own timers need not be visible in what it reports; the
+    expected share is what can be learned, and re-learned, from routine
+    operation."""
+    d = np.asarray(compressor, dtype=float)
+    h = np.asarray(heater_share, dtype=float)
+    cold = np.maximum(0.0, cold_below - np.asarray(outdoor, dtype=float))
+    b = np.zeros_like(d) if boost is None else np.asarray(boost, dtype=float)
+    ok = np.isfinite(d) & np.isfinite(h) & np.isfinite(cold) & np.isfinite(b)
+    if valid is not None:
+        ok &= np.asarray(valid, dtype=bool)
+    X = np.c_[d, d * cold, d * b][ok]
+    y = h[ok]
+    if len(y) < 10:
+        raise ValueError("need at least ten steps to learn the auxiliary share")
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+    coef = np.maximum(coef, 0.0)
+    res = y - X @ coef
+    return {
+        "aux_share": float(coef[0]),
+        "aux_cold_slope": float(coef[1]),
+        "aux_boost": float(coef[2]),
+        "aux_cold_below": float(cold_below),
+        "rmse": float(np.sqrt(np.mean(res**2))),
+        "n": len(y),
+    }
+
+
+def fit_response(x, y, edges) -> list[tuple[float, float]]:
+    """A monotone (non-decreasing) response curve of ``y`` on ``x`` from
+    binned means — a device's learned habit, such as how often a circulation
+    pump runs at a given supply target. Returns ``(x, y)`` knots at the bin
+    means, for :func:`numpy.interp`."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x, y = x[ok], y[ok]
+    knots = []
+    for a, b in itertools.pairwise(edges):
+        m = (x >= a) & (x < b)
+        if m.sum() >= 5:
+            knots.append([float(x[m].mean()), float(y[m].mean())])
+    if not knots:
+        raise ValueError("no bin has enough data")
+    ys = np.maximum.accumulate([k[1] for k in knots])  # pool to non-decreasing
+    return [(k[0], float(v)) for k, v in zip(knots, ys, strict=True)]
+
+
 # -- the components -------------------------------------------------------------
 
 
@@ -227,6 +298,21 @@ class CurveControlledHeatSource(Component):
         c = self.config
         return c["slope"], c["factor"], c["pivot"], c["parallel"]
 
+    def actuate(self, plan) -> list:
+        """§8.7: the planned supply temperature through the inverse curve, as
+        the fake outdoor value to show the device, per step."""
+        from ..actuate import Command
+
+        col = f"{self.refs['radiators']}.supply"
+        if col not in plan.decisions:
+            return []
+        out = []
+        for k, t in enumerate(plan.index):
+            end = t + pd.Timedelta(seconds=float(plan.dt[k]))
+            v = float(self.fake_outdoor(plan.decisions[col].iloc[k]))
+            out.append(Command.of(plan, self.name, "fake_outdoor", v, t, end))
+        return out
+
     def target(self, t_out):
         """The supply target the device computes from the outdoor value it sees, K."""
         c = self.config
@@ -255,7 +341,26 @@ class ThermostatChargedTank(Component):
         _temp("upper", required=False, doc="stop limit"),
         _delta("margin", 1.0, doc="how far past a limit the fake value is shown"),
     )
-    ports = (Port("node", kind="node", doc="the tank node the device's sensor sits in"),)
+    ports = (
+        Port("node", kind="node", doc="the tank node the device's sensor sits in"),
+        Port("source", kind="component", required=False, doc="the source that charges the tank"),
+    )
+
+    def actuate(self, plan) -> list:
+        """§8.7: BOOST while the plan runs the charging source, BLOCK
+        otherwise, as the mode the fake tank sensor encodes."""
+        from ..actuate import Command
+
+        src = self.refs.get("source")
+        col = next((f"{src}.{k}" for k in ("delta", "share") if src and f"{src}.{k}" in plan.decisions), None)
+        if col is None:
+            return []
+        out = []
+        for k, t in enumerate(plan.index):
+            end = t + pd.Timedelta(seconds=float(plan.dt[k]))
+            m = "boost" if float(plan.decisions[col].iloc[k]) > 1e-6 else "block"
+            out.append(Command.of(plan, self.name, "mode", m, t, end))
+        return out
 
     def check(self) -> list[tuple[str | None, str]]:
         lo, hi = self.config.get("lower"), self.config.get("upper")
@@ -305,6 +410,7 @@ class IVT490Plant(Component):
     SLOPE_FACTOR = 0.16
     PIVOT = 293.15
 
+    plan_order = 20
     fields = (
         Number("curve_slope", min=0.0, min_exclusive=True, max=10.0),
         _delta("parallel", 0.0),
@@ -312,12 +418,23 @@ class IVT490Plant(Component):
         _delta("heating_differential", 2.0, doc="jacket start below the curve target, K"),
         _delta("margin", 1.0, doc="fake tank value past a limit, K"),
         _temp("supply_max", default=273.15 + 56.0),
+        _temp("supply_min", default=273.15 + 14.0, doc="the curve's floor"),
+        _temp("tank_lower", default=273.15 + 49.5, doc="hot-water start limit on the tank sensor"),
+        _temp("tank_upper", default=273.15 + 54.5, doc="hot-water stop limit on the tank sensor"),
+        _temp("condensing_max", default=273.15 + 60.0, doc="the compressor stops above this jacket"),
+        # the controller's own heater, learned (fit_aux_share)
+        Number("aux_share", required=False, default=0.0, min=0.0, max=1.0),
+        Number("aux_cold_slope", required=False, default=0.0, min=0.0, max=1.0, doc="per K"),
+        _temp("aux_cold_below", default=273.15 + 8.0),
+        Number("aux_boost", required=False, default=0.0, min=0.0, max=1.0),
+        Number("event_heater_share", required=False, default=1.0, min=0.0, max=1.0),
     )
     ports = (
         Port("tank", kind="component", component_type="JacketTank"),
         Port("radiators", kind="component", component_type="Radiators"),
         Port("heat_pump", kind="component", required=False, component_type="HeatPump"),
         Port("heater", kind="component", required=False, component_type="ElectricHeater"),
+        Port("outdoor", kind="boundary", required=False, doc="the real outdoor temperature"),
     )
 
     def dynamics(self, p: Mapping[str, float], mode: str) -> list:
@@ -351,3 +468,183 @@ class IVT490Plant(Component):
         hw = hysteresis(tank_seen, tank_lower, tank_upper, valid=valid)
         ht = hysteresis(jacket, jt - self.config["heating_differential"], jt, valid=valid)
         return {"hot_water": hw, "heating": ht, "compressor": hw | ht}
+
+    def aux_alpha(self, t_out, boost: bool = True) -> np.ndarray:
+        """The heater's expected share per unit of compressor running."""
+        c = self.config
+        cold = np.maximum(0.0, c["aux_cold_below"] - np.asarray(t_out, dtype=float))
+        return c["aux_share"] + c["aux_cold_slope"] * cold + (c["aux_boost"] if boost else 0.0)
+
+    # -- planning ---------------------------------------------------------------
+    def _names(self, house_components) -> tuple[str | None, str | None, str, str, str]:
+        hp = self.refs.get("heat_pump")
+        heater = self.refs.get("heater")
+        tank = house_components[self.refs["tank"]]
+        jacket, dhw = tank.nodes()[0], tank.nodes()[1]
+        return hp, heater, self.refs["radiators"], jacket, dhw
+
+    def plan_prepare(self, ctx) -> None:
+        hp, heater, *_ = self._names(ctx.house.components)
+        if hp:
+            ctx.requests.add(f"on:{hp}")
+        if heater:
+            ctx.requests.add(f"claim:{heater}")
+
+    def plan(self, ctx) -> None:
+        """The plant's own rules in the plan: the compressor the plan runs
+        (by BOOST) stops at the thermostat's upper limit on the tank sensor
+        and at the condensing limit; the heater is the controller's expected
+        share of that running; device events (anti-legionella) fix the
+        compressor off and the heater on for the window they occupy; the
+        supply target stays under the controller's maximum."""
+        c, n = self.config, ctx.n
+        hp, heater, rad, jacket, dhw = self._names(ctx.house.components)
+        cover = ctx.event_cover(self.name)
+        ev = cover > 0
+        if hp:
+            delta, on = ctx.milp[f"{hp}.delta"], ctx.milp[f"{hp}.on"]
+            big = 100.0
+            ctx.milp.add(
+                [(ctx.state(dhw)[1:], 1.0), (on, big)],
+                ub=c["tank_upper"] - T0 + big,
+                name=f"{self.name} tank stop",
+            )
+            ctx.milp.add(
+                [(ctx.state(jacket)[1:], 1.0), (on, big)],
+                ub=c["condensing_max"] - T0 + big,
+                name=f"{self.name} condensing limit",
+            )
+            if ev.any():
+                ctx.milp.fix(delta[ev], 0.0)
+                ctx.milp.fix(on[ev], 0.0)
+        if heater:
+            h = ctx.milp[f"{heater}.share"]
+            out_b = self.refs.get("outdoor")
+            t_out = ctx.signal(ctx.boundary_signal(out_b)) if out_b else np.full(n, c["aux_cold_below"])
+            alpha = self.aux_alpha(t_out)
+            e = cover * c["event_heater_share"]
+            if hp:
+                ctx.milp.add(
+                    [(h, 1.0), (ctx.milp[f"{hp}.delta"], -alpha)], e, e, name=f"{self.name} heater share"
+                )
+            else:
+                ctx.milp.fix(h, e)
+        ua = float(ctx.values(rad).get("UA_rad", 250.0)) / 1000.0
+        if ctx.has_decision(f"{rad}.Q"):
+            U = ctx.decision(f"{rad}.Q")
+            zone = ctx.house.components[rad].refs["zone"]
+            Xz = ctx.state(zone)[:-1]
+            ctx.milp.add([(U, 1.0), (Xz, ua)], ub=ua * (c["supply_max"] - T0), name=f"{self.name} supply max")
+            sup = lambda x: np.clip(x[Xz] + T0 + x[U] / ua, c["supply_min"], c["supply_max"])  # noqa: E731
+            ctx.add_result(f"{self.name}.supply_target", sup)
+            ctx.add_result(f"{self.name}.fake_outdoor", lambda x: self.fake_outdoor(sup(x)))
+        if hp:
+            dl = ctx.milp[f"{hp}.delta"]
+
+            def mode(x):
+                m = np.where(x[dl] > 1e-6, MODES.index("boost"), MODES.index("block")).astype(float)
+                m[ev] = MODES.index("auto")
+                return m
+
+            ctx.add_result(f"{self.name}.mode", mode)
+            ctx.add_result(f"{self.name}.event", lambda x: cover)
+
+    def actuate(self, plan) -> list:
+        """The plan's first steps as the two fake-sensor commands (§8.7,
+        A.2): a mode per step (BOOST for the planned on-fraction of the step,
+        then BLOCK; AUTO in a device event) and the supply target, which the
+        interface turns into a fake outdoor value through the inverse curve
+        (:meth:`fake_outdoor` gives that value too)."""
+        from ..actuate import Command
+
+        out = []
+        dec = plan.decisions
+        hp = self.refs.get("heat_pump")
+        mcol, scol = f"{self.name}.mode", f"{self.name}.supply_target"
+        for k, t in enumerate(plan.index):
+            end = t + pd.Timedelta(seconds=float(plan.dt[k]))
+            if mcol in dec:
+                m = MODES[int(dec[mcol].iloc[k])]
+                frac = float(dec[f"{hp}.delta"].iloc[k]) if hp and m == "boost" else 1.0
+                split = t + pd.Timedelta(seconds=float(plan.dt[k]) * frac)
+                out.append(Command.of(plan, self.name, "mode", m, t, split if m == "boost" else end))
+                if m == "boost" and split < end:
+                    out.append(Command.of(plan, self.name, "mode", "block", split, end))
+            if scol in dec:
+                ts = float(dec[scol].iloc[k])
+                out.append(Command.of(plan, self.name, "supply_target", ts, t, end))
+                out.append(Command.of(plan, self.name, "fake_outdoor", float(self.fake_outdoor(ts)), t, end))
+        return out
+
+
+@dataclass
+class IVT490Device:
+    """The reference plant's controller, replayed step by step for a
+    simulated plant (a backtest's digital twin, §10.2): given the commands
+    (mode, supply target) and the plant's temperatures, what the controller
+    does — the compressor by its two demands (hot water on the tank sensor
+    as faked, heating on the jacket against the curve target) and its
+    condensing limit, the heater as its learned expected share, the shunt
+    mixing the supply down from the jacket, and the circulation pump by its
+    learned response to the supply target.
+
+    ``pump`` is a list of ``(supply target K, on-fraction)`` knots
+    (:func:`fit_response`); without it the pump always runs.
+    """
+
+    plant: IVT490Plant
+    pump: list[tuple[float, float]] | None = None
+    _hw: bool = False
+    _ht: bool = False
+    history: list[dict] = field(default_factory=list, repr=False)
+
+    def reset(self, hot_water: bool = False, heating: bool = False) -> None:
+        self._hw, self._ht = hot_water, heating
+
+    def step(
+        self,
+        mode: str,
+        supply_target: float,
+        tank_sensor: float,
+        jacket: float,
+        t_out: float,
+        event: float = 0.0,
+        boost_fraction: float = 1.0,
+    ) -> dict[str, float]:
+        """One step of the controller (temperatures K). Returns the
+        compressor on-fraction, heater share, supply temperature and pump
+        on-fraction — the model inputs the device produces."""
+        c = self.plant.config
+        lo, hi = c["tank_lower"], c["tank_upper"]
+        target = float(np.clip(supply_target, c["supply_min"], c["supply_max"]))
+        if event > 0:
+            mode = "auto"
+        seen = float(fake_tank_sensor(mode, tank_sensor, lo, hi, c["margin"]))
+        if seen <= lo:
+            self._hw = True
+        elif seen >= hi:
+            self._hw = False
+        diff = c["heating_differential"]
+        if jacket <= target - diff:
+            self._ht = True
+        elif jacket >= target:
+            self._ht = False
+        demand = self._hw or self._ht
+        comp = 1.0 if (demand and jacket < c["condensing_max"] and event <= 0) else 0.0
+        if mode == "boost":
+            comp *= boost_fraction
+        heater = float(
+            np.clip(
+                comp * self.plant.aux_alpha(t_out, boost=mode == "boost") + event * c["event_heater_share"],
+                0,
+                1,
+            )
+        )
+        supply = min(target, jacket)
+        pump = 1.0 if self.pump is None else float(np.interp(target, *zip(*self.pump, strict=True)))
+        return {
+            "compressor": comp,
+            "heater_share": heater,
+            "supply_temperature": supply,
+            "circulation_pump": pump,
+        }

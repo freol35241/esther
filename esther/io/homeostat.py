@@ -6,6 +6,7 @@ live database plus sealed monthly archives — with, in each file::
     series(id, class, entity, aspect, source, row_count, oldest_ts, newest_ts)
     samples(series_id, ts, room_id, kind, value)     -- ts in µs since the epoch, UTC
     rooms(id, name)
+    forecasts(series_id, issued_ts, valid_ts, valid_end, room_id, value)   -- every issue kept
 
 ``kind`` is 0 for a boolean, 1 for a number, 2 for a string. Series ids are
 local to each file, so files are joined on ``(class, entity, aspect, source)``.
@@ -220,6 +221,56 @@ class HomeostatHistory:
         else:
             data = pd.Series(val, index=index, name=name, dtype=object)
         return data
+
+    def read_forecasts(
+        self, address: str | Address, start: TimeLike | None = None, end: TimeLike | None = None
+    ) -> pd.DataFrame:
+        """Every issue of one forecast series issued in ``[start, end)``,
+        merged over the files: columns ``issued``, ``valid``, ``end`` (NaT for
+        an instant), ``value``. The address names a ``forecast`` class
+        series (``"forecast:entity/aspect@source"``). Files without a
+        forecasts table contribute nothing; an address no file knows raises
+        :class:`KeyError`."""
+        a = address if isinstance(address, Address) else Address.parse(address)
+        t0, t1 = _us(start), _us(end)
+        parts = []
+        found = False
+        for p in self.paths:
+            with closing(self._connect(p)) as con:
+                has = con.execute(
+                    "select 1 from sqlite_master where type='table' and name='forecasts'"
+                ).fetchone()
+                row = con.execute(
+                    "select id from series where class=? and entity=? and aspect=? and source=?",
+                    (a.cls, a.entity, a.aspect, a.source),
+                ).fetchone()
+                if row is None:
+                    continue
+                found = True
+                if not has:
+                    continue
+                q = "select issued_ts, valid_ts, valid_end, value from forecasts where series_id=?"
+                args: list[object] = [row[0]]
+                if t0 is not None:
+                    q += " and issued_ts>=?"
+                    args.append(t0)
+                if t1 is not None:
+                    q += " and issued_ts<?"
+                    args.append(t1)
+                try:
+                    rows = con.execute(q, args).fetchall()
+                except sqlite3.DatabaseError as e:
+                    raise HomeostatError(f"{p}: reading {a}: {e}") from e
+            parts.extend(rows)
+        if not found:
+            raise KeyError(f"no series {a} in {', '.join(p.name for p in self.paths)}")
+        df = pd.DataFrame(parts, columns=["issued", "valid", "end", "value"])
+        # later files win on (issued, valid), as for samples
+        df = df.drop_duplicates(["issued", "valid"], keep="last")
+        for c in ("issued", "valid", "end"):
+            df[c] = pd.to_datetime(df[c], unit="us", utc=True)
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        return df.sort_values(["issued", "valid"]).reset_index(drop=True)
 
     def read_many(
         self, addresses: Sequence[str], start: TimeLike | None = None, end: TimeLike | None = None

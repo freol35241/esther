@@ -1,6 +1,6 @@
 # esther v1 — specification
 
-Status: **agreed; being built** (M0–M2 merged, M3 in review; §11). The v0 line
+Status: **agreed; being built** (M0–M3 merged, M4 in review; §11). The v0 line
 (single-state model, hand-set parameters, SLSQP, MQTT service) is preserved at
 tag `v0-legacy`; the unmerged dev line ends at `v0.4.0_dev9`. v1 is a rewrite in
 the same repository, not an increment.
@@ -97,6 +97,15 @@ thermal model that learns its parameters from the house's own history**.
   time limit returns the incumbent if one exists, flagged, or no plan.
 - **N2.** Deterministic: the same inputs, parameters and solver version give the
   same plan.
+
+  *As measured in M4* (the reference plant, a laptop-class x86, HiGHS single
+  thread): warm-started from the previous plan, the 10 s limit is met with an
+  incumbent close to a long reference solve; the 2 s SHOULD is not, and a
+  cold start can return a poor incumbent (an open item: a cheap first
+  incumbent, as M0's two-phase solve). A wall-clock limit is not
+  deterministic; a node limit is, at a cost in time — each plan reports which
+  stopped it. HiGHS crashed (a segfault) a few times in long runs, so a
+  planner belongs in a process of its own; a crash is "no plan" (§8.8).
 - **N3.** Python ≥ 3.11, pure-Python dependencies plus wheels from PyPI. No
   compiled code of our own.
 - **N4.** Internal units are SI: W, J, K, s, kg. °C appears only at the I/O
@@ -146,11 +155,19 @@ MUST NOT import anything from `io`. Readers are optional extras
 
 ### 3.2 Dependencies
 
-numpy, scipy, pandas (dataset handling only), cvxpy with HiGHS for the MILP
-(decided in M0 by the timing spike `benchmarks/reference_milp.py`: on the same
-problem and solver, cvxpy builds in ~0.02 s against linopy's ~3 s, and its
-parameters give warm-started re-solves), tomllib (stdlib). No CasADi, no JAX in v1; revisit if the fit needs
-automatic differentiation.
+numpy, scipy, pandas (dataset handling only), HiGHS (`highspy`) for the MILP,
+tomllib (stdlib). No CasADi, no JAX in v1; revisit if the fit needs automatic
+differentiation.
+
+*M0* chose cvxpy over linopy as the modelling layer (the timing spike
+`benchmarks/reference_milp.py`: cvxpy builds in ~0.02 s against linopy's
+~3 s). *As built (M4):* the planner builds its sparse matrices itself and
+hands them to HiGHS directly (`esther.plan.milp`). The decisive need was the
+warm start: an MPC re-plan starts from the **previous plan shifted by a
+step**, which HiGHS takes as a (partial) solution to complete — cvxpy's HiGHS
+interface only reuses its own last solution of the same problem. The direct
+build is also faster still. cvxpy and linopy remain for the M0 spike only
+(the `spike` extra).
 
 ---
 
@@ -425,6 +442,21 @@ has fallen `heating_differential` below the curve target and not reached it),
 so that the logic can be replayed against a record and scored before a
 planner relies on it. Decisions and constraints arrive in M4.
 
+*As built (M4):* `ivt490.Plant` plans the compressor directly — its
+on-fraction, realised by BOOST for that share of the step and BLOCK for the
+rest — so the compressor stops at the thermostat's upper limit on the tank
+sensor and at its condensing limit (rows active while it runs), and the
+supply target stays under the controller's maximum. The **electric heater is
+the controller's**, not esther's (`ElectricHeater.commandable = false`): its
+triggers are not in what the controller reports, so the wrapper carries its
+**expected share** per unit of compressor running, learned from routine
+operation (`fit_aux_share`: a share, more in the cold, more under BOOST) —
+this is how a BOOST's heater cost is priced. A device event (§7.6) fixes the
+compressor off and the heater on for its window, mode AUTO.
+`IVT490Device` replays the controller step by step for a digital twin
+(§10.2), with its circulation pump as a learned response to the supply
+target (`fit_response`).
+
 #### 4.5.7 Economics and comfort
 
 - **`Tariff`** — electricity: spot price per step plus fixed per-kWh fees plus
@@ -694,6 +726,18 @@ Every forecaster implements one interface: `forecast(now, horizon, step) →
 (values, provenance)`. Provenance records what was used and when it was
 issued, so a backtest can prove it used only information available at `now`.
 
+*As built (M4)* (`esther.forecast`): a forecast is step means on the
+planning grid (§8.1), with, per signal, which steps are **estimated** and a
+provenance that records the issue used, when it became readable and the
+newest datum read (`data_until`). A forecast that read past `now` is refused
+(`check_provenance`); a forecaster meant to see the future (`Perfect`, the
+perfect-foresight reference) says so and is refused unless declared. Every
+learned forecaster re-learns from history **as of `now`** at each call, with
+recent days weighted more — the self-learning of G2 applied to the
+exogenous inputs. Raw issues carry an **availability lag**: a numerical
+weather forecast is stamped with its model run's reference time, which is
+before it can be fetched.
+
 ### 7.1 Weather
 
 Outdoor temperature and cloud or irradiance from a numerical forecast,
@@ -701,7 +745,9 @@ resampled to the step **using its own timestamps** (v0 assumed one value per
 hour and discarded the times; forecast resolution coarsens with lead time). The
 first steps are blended from the current measurement to the forecast over a
 configured time constant (a forecast is often biased at the house for the
-first hours).
+first hours). *As built:* the newest issue readable at `now`; past its last
+point the last value is held, flagged estimated. Irradiance with no forecast
+of its own is the measured proxy's learned daily profile.
 
 ### 7.2 Price
 
@@ -723,6 +769,13 @@ distribution, conditioned on occupancy. The planner uses a **high quantile**
 (default 80th) — a cold shower costs more goodwill than the energy saved. The
 quantile is a house setting.
 
+*As built (M4):* the quantile is of the **daily** energy, spread over the day
+by the slots' mean shape. Draws are sparse — most days have none in a given
+hour — so a per-slot quantile is mostly zero and, summed, can fall well
+*below* the mean. The per-slot form remains as an option. Occupancy
+conditioning scales a slot by the forecast presence over the slot's mean
+presence.
+
 ### 7.5 Manual firing and other unplanned heat
 
 A stove lit by hand is detected from its flue or combustion-chamber temperature
@@ -735,6 +788,12 @@ over a fitted time after the signature ends. It is never forecast ahead.
 Events the device schedules itself (a periodic anti-legionella raise) are
 forecast from their observed period and last occurrence, and enter as a fixed
 load on the plan — esther MUST NOT plan to suppress them (§8.4).
+
+*As built (M4):* the period is the median interval of the occurrences
+detected in history as of `now` (occurrences closer than a day are one
+event seen in pieces), the duration their median; an event under way runs to
+its start plus the duration. The forecast is the events' windows (widened by
+a margin) and the share of each step they cover.
 
 ---
 
@@ -758,6 +817,18 @@ jumping more than a configured amount).
   — a small MILP; HiGHS solves problems of this size in well under a second.
   M0's spike verifies that.
 
+*As built (M4):* every component contributes its own variables, rows and
+costs (`Component.plan`, after a `plan_prepare` pass in which one component
+can ask another for something — a wrapper asks its heat pump for on/off
+indicators). Starts by level are continuous and exact (products of
+binaries). A stove MAY be planned **modulating**: lit or not per step, its
+output continuous between its lowest and highest level, fuel linear in the
+output, the translator rounding to the nearest level — one binary a step
+instead of one per level. With one-hot levels HiGHS did not find good
+plans within N1's limit (M0 met the same); M4 measures both (the reference
+plant's backtest). Integer decisions are free per step for `free_hours`
+(default 6 h) and held over clock-aligned hours after that (move blocking).
+
 ### 8.3 Constraints
 
 - Dynamics: `x_{k+1} = A_d x_k + B_d u_k + E_d d_k` (from §4.3).
@@ -776,6 +847,16 @@ jumping more than a configured amount).
   the current temperature (v0's rule, kept: the problem must be feasible from
   wherever the house is).
 
+*As built (M4):* the band and the hard floor are widened to include the
+temperature at plan time and close at `recovery` (default 1 K/h). A source's
+sink limit and the reference plant's thermostat stop are rows on the state
+at the step's end, active while its on indicator is (big-M). Minimum run,
+minimum off and the stove's cool-down are the tight window forms over start
+indicators; a device's state at plan time (lit, for how long; off, for how
+long) enters them as history. During the ignition steps the level is held.
+Every solution is **audited** against every row, bound and integrality
+before it becomes a plan; a violation is no plan (§8.8).
+
 ### 8.4 Policy constraints
 
 House policy is configuration, not code:
@@ -783,7 +864,9 @@ House policy is configuration, not code:
 - `Stove.allowed`: a predicate over steps — by default "someone forecast home
   with probability ≥ p", and never between configured hours. Steps where it is
   false force the level to off.
-- `DhwService.min_temp` at forecast draw times.
+- `DhwService.min_temp` at forecast draw times. *As built:* on the node's
+  temperature at the **start** of each step a draw is forecast — what the tap
+  gets, before the draw cools the sensor.
 - Device-internal events (§7.6): the steps they occupy fix the affected
   decisions to "let the device do it" (`mode = auto` for the tank).
 - Manual overrides from the integration layer: a pinned decision for a period.
@@ -803,12 +886,29 @@ minimise  Σ_k [ c_el,k · Σ_sources P_k Δt              electricity at the st
 solve, `COP_k` is recomputed on the planned sink temperatures and the problem
 re-solved once if any step's COP moved by more than 5 %.
 
+*As built (M4):* a fixed-speed machine with a measured electrical input
+(`P_el`) carries the sink dependence in its **heat output** instead
+(`q_k = Q + dQ/dT (T_ref − T̂_sink,k)`, from the fit, M3) at constant
+electricity; the same re-linearisation applies to it. The first pass
+linearises on the previous plan's trajectory, shifted (or the current state
+when there is none); the second is warm-started from the first; the time
+limit covers both (N1). The comfort weight may differ above and below the
+band (`weight_above`).
+
 ### 8.6 Terminal value
 
 Without it the plan empties every store at the horizon. `V_terminal` values the
 energy in each storage node above its band floor at the mean of the estimated
 part of the price forecast, divided by the source COP that would replace it.
 Linear in the terminal state.
+
+*As built (M4):* each source registers its marginal cost of heat per step
+(price over COP, fuel price over delivered heat per kg); the terminal price
+is the cheapest source's, averaged over the estimated part of the horizon
+(all of it when nothing is estimated), times `terminal_factor` (0.9). The
+nodes valued and their floors come from the components that own them: a
+zone and its mass nodes at the comfort band's lower edge, a tank's nodes at
+its service temperature.
 
 ### 8.7 Actuation
 
@@ -828,6 +928,13 @@ translators:
 
 Every translated command carries the plan's id and expiry.
 
+*As built (M4)* (`esther.actuate`): `Component.actuate(plan)` returns
+commands (`device, kind, value, start, end, plan_id, expires, advisory`);
+`translate` collects them. The reference plant's wrapper gives a mode per
+step — BOOST for the planned on-fraction of the step, then BLOCK; AUTO while
+a device event runs — and the supply target with its fake outdoor value. A
+stove's schedule is its next burn: start with level, level changes, stop.
+
 ### 8.8 Failure behaviour
 
 - **No feasible plan or solver timeout without an incumbent:** no plan is
@@ -837,7 +944,12 @@ Every translated command carries the plan's id and expiry.
   per input.
 - **Model not accepted** (no fit has passed the gate): planning runs in
   **advisory mode** — plans are published, marked advisory, and executors MUST
-  NOT act on them.
+  NOT act on them. *As built:* every command of an advisory plan carries
+  `advisory = true` (`Command.actionable` false).
+- *As built:* a solve stopped by its limit returns its incumbent, and the
+  plan is **flagged** (`Plan.flagged`); with none, no plan. A wall-clock
+  stop is reported as not reproducible (N2); a node limit is the
+  deterministic budget.
 
 ---
 
@@ -903,6 +1015,21 @@ Replay a past period step by step: state estimate from the measurements up to
 
 A backtest cannot score the counterfactual cost of acting on the plan (the house
 did something else); that is what §10.4 is for.
+
+*As built (M4)* (`esther.backtest`): besides scoring plans against what
+happened, the harness runs a controller **closed-loop on a digital twin** —
+the fitted model in identification mode (`LinearTwin`), with a device
+callback standing in for the installed controllers — so that a counterfactual
+can be *estimated*: what the house would have done under esther, under its
+incumbent control replayed through the same twin, and under perfect
+foresight. The estimate is only as good as the twin; it does not replace
+§10.4. The scorecard is cost on realised prices, K·h outside the comfort
+band, hot-water service at draw starts, source hours and starts; the plans'
+predicted trajectories are scored against the realised ones at 1/6/24 h.
+**No look-ahead** is checked two ways: provenance (`data_until ≤ now`), and a
+**leak check** that re-plans with every datum after `now` poisoned and
+requires the same plan — a forecaster that reads the future cannot pass it,
+whatever its provenance claims.
 
 ### 10.3 Shadow
 

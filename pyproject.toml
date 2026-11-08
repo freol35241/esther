@@ -19,17 +19,15 @@ dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
     "pandas>=2.1",
-    # MILP modelling and solver (spec §3.2; cvxpy over linopy chosen by the
-    # M0 spike, benchmarks/reference_milp.py)
-    "cvxpy>=1.6",
+    # the MILP solver; the planner builds its matrices itself (spec §3.2)
     "highspy>=1.7",
 ]
 
 [project.optional-dependencies]
 # Readers live in esther.io and are extras only (spec §3.1).
 homeostat = []
-# The M0 spike's comparison backend; not used by esther itself.
-spike = ["linopy>=0.4"]
+# The M0 spike's modelling layers (benchmarks/reference_milp.py); not used by esther itself.
+spike = ["cvxpy>=1.6", "linopy>=0.4"]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
