@@ -29,6 +29,7 @@ import hashlib
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -36,13 +37,14 @@ import pandas as pd
 
 from ..core.model import Capacity, LinearModel, compose, discretise
 from ..forecast.base import Event, Forecast, check_provenance, plan_grid
+from ..identify.model_file import FittedModel, load_model
 from .blocks import Linear
 from .milp import MILP, Solution, SolveOptions
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..house import House
 
-__all__ = ["Plan", "PlanContext", "PlanError", "Planner", "PlannerOptions"]
+__all__ = ["Plan", "PlanContext", "PlanError", "Planner", "PlannerOptions", "load_planner"]
 
 T0 = 273.15
 KWH = 3.6e6
@@ -325,6 +327,21 @@ class Planner:
         order = sorted(house.components.items(), key=lambda kv: getattr(kv[1], "plan_order", 50))
         self.order = [name for name, _ in order]
 
+    @classmethod
+    def from_model(cls, house: House, model: FittedModel, options: PlannerOptions | None = None) -> Planner:
+        """A planner on a fitted-model file's values, its gate verdict
+        (refused: advisory) and its version. The house is not checked
+        against the file's hash here: :func:`load_planner` does that."""
+        validation = {"accepted": model.accepted, "reasons": list(model.reasons), **model.metrics}
+        return cls(
+            house,
+            model.values,
+            options,
+            accepted=model.accepted,
+            model_version=model.version,
+            validation=validation,
+        )
+
     # -- the dynamics ---------------------------------------------------------
     def _discrete(
         self, dt: float, levels: tuple[float, ...] = ()
@@ -605,3 +622,13 @@ class Planner:
 
     def grid(self, now) -> tuple[pd.DatetimeIndex, np.ndarray]:
         return plan_grid(now, self.house.horizon, self.house.step)
+
+
+def load_planner(house_path, model_path, options: PlannerOptions | None = None, registry=None) -> Planner:
+    """A planner from a house file and the model file fitted for it; a model
+    fitted for another house is refused (``ModelFileError``)."""
+    from ..house import loads_house
+
+    text = Path(house_path).read_text(encoding="utf-8")
+    model = load_model(model_path, house_text=text)
+    return Planner.from_model(loads_house(text, registry=registry, source=str(house_path)), model, options)
